@@ -1,4 +1,4 @@
-# dsh-qq-access 0.4.0 · NapCat 托管 + 管理面板
+# dsh-qq-access · NapCat 托管 + 管理面板
 
 为 DeepSeek Harness 接入个人 QQ 私聊、群聊和 QQ 空间留言板。**Windows x64 已加入 NapCat 的安装、配置与进程管理**：首次下载官方运行包，之后随 Harness 启动，连接配置自动写好，扫码页就绪后自动打开。
 
@@ -34,10 +34,10 @@ node cli.mjs setup
 
 Windows x64 的 `setup` 自动启用托管模式、生成密钥并下载运行包。压缩包约 **118.3 MiB**，首次需要联网，之后复用本机安装。下载失败可运行 `node cli.mjs napcat-install` 重试。默认配置在 `%USERPROFILE%\.dsh-qq-access\config.json`，不会覆盖已有文件。
 
-2. 在 Harness 桌面版插件管理中安装目录内的 `dsh-qq-access-0.4.0.tgz`，使用完整路径。或在 CLI / Web profile 执行：
+2. 从 [Releases](https://github.com/Applepinea/dsh-qq-access/releases) 下载最新的 `dsh-qq-access.tgz`，在 Harness 桌面版插件管理中选中它（填完整路径）。或在 CLI / Web profile 执行：
 
 ```powershell
-dsh plugin --profile web add C:/Plugins/dsh-qq-access-0.4.0.tgz
+dsh plugin --profile web add C:/Plugins/dsh-qq-access.tgz
 dsh web
 ```
 
