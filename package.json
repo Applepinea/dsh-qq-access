@@ -88,6 +88,7 @@
     "napcat:enable": "node cli.mjs napcat-enable",
     "napcat:login": "node cli.mjs napcat-login",
     "check": "node scripts/check.mjs",
+    "release": "node scripts/release.mjs",
     "test": "node --test",
     "pack:tgz": "npm pack"
   }

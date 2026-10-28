@@ -119,9 +119,18 @@ API、上报接收和登录页只绑定本机。端口冲突时退出冲突程�
 ```powershell
 npm run check   # 清单字段、文件完整性、语法、客户端 bundle 自检
 npm test        # 冒烟测试：导出形状、补丁条目、配置校验，不需要宿主
-npm run pack:tgz
+npm run release # 自检 + 测试 + 升 patch + 打包到 dist/dsh-qq-access.tgz
 ```
 
 `check` 会校验 `dsh.bundle.patch` 指向的补丁、`exports` 与 `files` 里的每个路径是否真实存在，以及客户端 bundle 里 `require()` 的宿主模块是否都写进了 `dsh.client.external`。宿主接口契约测试（`tools.guard`、`agents.create` 等）需要真实 DSH 包，不在本仓库内。
+
+发版只需一条命令，文档里不写版本号，版本只在 `package.json` 维护：
+
+```
+npm run release          # 0.5.0 → 0.5.1
+npm run release minor    # 0.5.0 → 0.6.0
+```
+
+产物固定叫 `dist/dsh-qq-access.tgz`，上传到 Release 时不用改名。
 
 本项目自写代码按 MIT 发布；NapCat 与官方运行包各组成部分遵循上游许可，本插件的 MIT 许可不代替它们的许可。接口和运行包依据见 [来源说明](docs/SOURCES.md)。
