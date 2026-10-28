@@ -1,0 +1,63 @@
+{
+  "selfId": "123456789",
+  "ownerIds": [],
+  "dataDir": "./data",
+  "onebot": {
+    "apiUrl": "http://127.0.0.1:3000",
+    "token": "REPLACE_WITH_RANDOM_API_TOKEN_32_CHARS",
+    "timeoutMs": 15000
+  },
+  "events": {
+    "port": 5701,
+    "secret": "REPLACE_WITH_RANDOM_EVENT_SECRET_32_CHARS"
+  },
+  "access": {
+    "privateMode": "all",
+    "groupMode": "all",
+    "privateIds": [],
+    "groupIds": [],
+    "blockedUsers": [],
+    "blockedGroups": []
+  },
+  "reply": {
+    "private": true,
+    "group": "mention",
+    "maxChars": 2000,
+    "contextMessages": 20,
+    "concurrency": 4,
+    "maxLiveSessions": 64,
+    "maxQueuePerConversation": 20,
+    "maxQueuedTotal": 100,
+    "timeoutMs": 180000,
+    "idleMs": 1800000
+  },
+  "retentionDays": 30,
+  "ownerHarnessTools": false,
+  "model": {},
+  "rate": {
+    "globalGapMs": 1000,
+    "peerGapMs": 3000,
+    "maxPerMinute": 20
+  },
+  "qzone": {
+    "enabled": true,
+    "channel": "msedge",
+    "headless": false,
+    "profileDir": "./data/qzone-profile",
+    "timeoutMs": 30000,
+    "guestbookFrame": "tgb",
+    "editorFrame": "veditor1_Iframe",
+    "submitSelector": "#btnPostMsg",
+    "itemSelector": "#msgList > li, #msgList .msg_item, .msg_list .msg_item, .msgList .msgItem"
+  },
+  "persona": "你是一名友好自然的 AI QQ 助手。用中文简洁聊天，不发送思考过程、工具日志或其他人的私聊内容。",
+  "napcat": {
+    "mode": "managed",
+    "autoInstall": true,
+    "autoOpenLogin": true,
+    "webuiPort": 6099,
+    "webuiToken": "REPLACE_WITH_RANDOM_WEBUI_TOKEN_32_CHARS",
+    "loginTimeoutMs": 600000,
+    "maxRestarts": 2
+  }
+}

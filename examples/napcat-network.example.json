@@ -1,0 +1,28 @@
+{
+  "network": {
+    "httpServers": [
+      {
+        "name": "dsh-qq-api",
+        "enable": true,
+        "host": "127.0.0.1",
+        "port": 3000,
+        "enableCors": false,
+        "enableWebsocket": false,
+        "messagePostFormat": "array",
+        "token": "REPLACE_WITH_CONFIG_ONEBOT_TOKEN",
+        "debug": false
+      }
+    ],
+    "httpClients": [
+      {
+        "name": "dsh-qq-events",
+        "enable": true,
+        "url": "http://127.0.0.1:5701/onebot",
+        "messagePostFormat": "array",
+        "reportSelfMessage": false,
+        "token": "REPLACE_WITH_CONFIG_EVENTS_SECRET",
+        "debug": false
+      }
+    ]
+  }
+}
