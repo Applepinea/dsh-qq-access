@@ -36,7 +36,8 @@ async function setup() {
       reply: { private: true, group: 'mention', maxChars: 2000, contextMessages: 20, concurrency: 4, maxLiveSessions: 64 },
       retentionDays: 30, ownerHarnessTools: false,
       rate: { globalGapMs: 1000, peerGapMs: 3000, maxPerMinute: 20 },
-      qzone: { enabled: true, channel: process.platform === 'win32' ? 'msedge' : '', headless: false },
+      // QQ 空间默认后台运行，避免每次读空间都弹窗；qzone-login 仍强制有头以便扫码。
+      qzone: { enabled: true, channel: process.platform === 'win32' ? 'msedge' : '', headless: true },
       persona: '你是一名友好自然的 AI QQ 助手。使用中文简洁聊天，诚实说明自己是 AI；不发送思考过程、工具日志或其他人的私聊内容。',
     };
     await mkdir(dirname(configPath), { recursive: true, mode: 0o700 });

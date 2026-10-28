@@ -1,7 +1,7 @@
-# dsh-qq-access 0.4.0 — 本地修复与增强
+# dsh-qq-access 0.5.0 — 本地修复与增强
 
 
-上游版本 **0.2.0**，本包为累积补丁后的 **0.4.0** 版本（前序内部代号 local.1 – local.7），全部在 DSH **0.2.1-rc.3** 实测通过。
+上游版本 **0.2.0**，本包为累积补丁后的 **0.5.0** 版本（前序内部代号 local.1 – local.7，另含 0.4.1 的图片能力），全部在 DSH **0.2.1-rc.3** 实测通过。
 
 > 演进脉络：local.1 修「能不能跑」→ local.2 修「跑得对不对」→ local.3 补「交互能力」→ local.4–7 修群聊 @ / 群昵称 / 撤回。
 
@@ -273,6 +273,514 @@ qq_send_message    => 拒绝（跨会话/发送仍受限）
 latest own within 120s => 1194229523 (age=63s)
 ```
 
+
+## 十三、0.4.1：让她能看到图片
+
+此前图片在 `segmentsText()` 里被渲染成 `[图片]` 占位，模型只看到这个字符串，**从未接触过像素**。
+
+### 26. 图片转成模型可见的 image content
+
+rc.3 的图片内容格式是 `{ type: 'image', attachment: ref }`，ref 必须来自 attachment store：
+
+```js
+const attachments = ctx.get('attachments');
+const ref = await attachments.saveImage({ data, mediaType, name });
+```
+
+处理链：
+
+1. `normalizeEvent()` 收集 `image` 消息段（`url` / `file`，最多 4 张），随归档一起保存（只存引用，不存 base64）
+2. 回复时 `imageParts()` 逐张取字节：
+   - 有 `url` → 直接 fetch（15 秒超时、8 MiB 上限）
+   - 只有 `file` → 先调 `get_image` 换出可访问地址
+   - 本地绝对路径 → 直接读文件
+3. `sniffImageType()` 用魔数判定 MIME（PNG/JPEG/GIF/WEBP）——attachment store 会校验声明类型与字节是否一致，猜错会直接拒绝
+4. `saveImage()` 落盘得 ref，拼进 `createUserMessage({ content: [text, ...images] })`
+
+失败一律静默降级：图片读不到就只发文本，不影响回复本身（错误写 `debug.log`）。
+
+### 27. 开关
+
+- `reply.vision`（默认 true）：关闭后不处理任何图片
+- `reply.maxImages`（默认 4，上限 8）：单条消息最多解析几张
+
+实测：
+
+```
+sniff PNG  : image/png
+sniff JPEG : image/jpeg
+sniff WEBP : image/webp
+images     : [{"url":"","file":"C:/.../\_t.png"}]
+text       : "[图片] 看这个"
+```
+
+
+## 十四、0.4.2：图片链路诊断
+
+0.4.1 加了图片处理，但模型仍说「只收到占位符」，且 `debug.log` 没有 `QQ 图片读取失败`——
+说明 `imageParts()` 在**静默返回空数组**，而不是抛错。
+
+本版在图片流水线的每个断点写 `debug.log`：
+
+| 阶段 | 含义 |
+|---|---|
+| `image no-sources` | 归档消息里没有 images（捕获层问题） |
+| `image disabled` | `reply.vision` 被关闭 |
+| `image attachments missing` | `ctx.get('attachments')` 拿不到服务（最可能） |
+| `image bytes null` | 下载/读盘失败 |
+| `image media unknown` | 魔数不认识 |
+| `image error <msg>` | saveImage 抛错 |
+
+下一步按日志定位真实断点，再决定是换服务名、改注入方式，还是改用其他图片通道。
+
+
+## 十五、0.4.3：图片取字节的顺序错了
+
+0.4.2 的诊断日志一针见血：
+
+```
+image attachments function    ← 服务正常
+image bytes null              ← 卡在取字节
+```
+
+`imageBytes()` 原来的顺序是「先问 NapCat 要地址，再读本地」：
+
+```js
+if (!location && source.file) {
+  try { const info = await this.client.call('get_image', { file: source.file }, signal); ... }
+  catch { return null; }        // ← 本地路径也走这里，NapCat 直接报错，函数就退出了
+}
+```
+
+当 `file` 是**本地绝对路径**时，NapCat 的 `get_image` 不认，抛错 → `return null` → 永远到不了后面的读盘分支。
+
+修复：**本地路径优先直读**，失败才回落到 NapCat 解析：
+
+```js
+if (source.file && isLocalPath(source.file)) {
+  try { return await readFileBytes(source.file); } catch { /* fall through */ }
+}
+```
+
+同时 `url` 解析出来的结果也支持本地路径。
+
+
+## 十六、0.4.4：QQ 表情看不见
+
+排查发现 QQ 表情在 NapCat 里有三种完全不同的形态，原来的 `segmentsText()` 一律当成 `[图片]` 或 `[表情]`，语义全丢：
+
+| 形态 | 实际结构 | 原来渲染 |
+|---|---|---|
+| QQ 小黄脸 | `image` + `sub_type: 7` + `summary: "[对]"` | `[图片]` |
+| 表情包/贴图 | `image` + `sub_type: 1` + `summary: "[动画表情]"` | `[图片]` |
+| 传统系统表情 | `face` + `id: "20"` + `raw.faceIndex` | `[表情]` |
+
+### 28. 保留表情语义
+
+- `image` 段有 `summary` → 直接用它：`[对]`、`[动画表情]`
+- `face` 段优先用 `raw.faceText`，没有则按 id 映射到 130 个常用表情名（`20` → `[偷笑]`、`13` → `[呲牙]`）
+- 未知 id 保留 `[表情 999]`，不瞎猜
+
+### 29. 表情不再送进视觉模型
+
+`images` 捕获逻辑原本只判断 `type === 'image'`，导致小黄脸和表情包也被下载、转 attachment、塞进多模态请求——既烧 token 又无意义。
+
+现在 `isSticker()` 会排除 `summary` 非空或 `sub_type` 为 1/7 的 image 段：
+
+```
+小黄脸     | text: "[对]"        | images: 0
+表情包     | text: "[动画表情]"   | images: 0
+真实图片   | text: "[图片]"      | images: 1
+图+表情    | text: "[图片][对]"   | images: 1
+```
+
+## 十七、附：图片能力真正的开关不在本插件
+
+0.4.1–0.4.3 修好了图片管道（捕获 → 本地读取 → attachment ref），但模型仍看不到图。
+真因是 **workbuddy provider 的 `imageModelIds` 为空**：
+
+```js
+withImageSelection(models, new Set(state.imageModelIds))  // 空集 → multimodal: false
+  → toPiModel(): input = ["text"]                          // pi-ai 只声明文本
+    → 发送前静默丢弃 image 块
+```
+
+修法：在 profile 的 `cordis.patch.yml` 里
+
+```yaml
+imageModelIds:
+  - deepseek-v4.1-flash
+```
+
+改完实测可识别：红圆、蓝矩形、绿三角、`VISION-OK 7391`、`triangle below` 全部答对。
+
+**教训**：管道通了不等于阀门开了。诊断日志（`image bytes 3759` / `image media image/png`）把问题从「插件坏了」精确定位到「provider 没声明多模态」。
+
+
+## 十八、0.4.5：发图能力
+
+此前插件只能发文本：`OneBotClient.send()` 只构造 `{type:'text'}` 段，模型手里没有任何发图路径，所以她只能说「我发不了图」。
+
+### 30. 三种图片来源统一成 NapCat 可接受的形式
+
+NapCat 的 `can_send_image` 返回 `yes`，且实测接受 `data:image/png;base64,...` 形式（`base64://` 也通）。
+
+`resolveImageSource()` 统一处理：
+
+| 输入 | 处理 |
+|---|---|
+| `data:image/...` | 原样透传 |
+| `base64://...` | 原样透传 |
+| `http(s)://...` | 交给 NapCat 自行拉取 |
+| 本地绝对路径 / `file://` | 读盘 → 魔数判型 → 转 data URL（8 MiB 上限） |
+
+### 31. 新工具 `qq_send_image`
+
+参数：`kind` / `peer_id` / `source` / `caption`（可选）/ `mentions`（群聊 @）/ `request_id`。
+
+- 走 `ActionLedger`，同 `request_id` 重试不会重复发图
+- 归档文本为 `caption + " [图片]"`，保留会话可读性
+- 计入 `sentSinceMark`，避免自动回复再补发一遍整段文本
+- 已加入 `pluginToolNames` 白名单
+
+实测：`sendImage` 返回 `{"message_id":1042577566}`，图片正常送达。
+
+
+## 十九、0.4.6：发表情 + 转发图片
+
+### 32. `qq_send_face` —— 发 QQ 系统表情
+
+NapCat 的 `face` 段直接可用（实测 `{"message_id":159237494}`）。参数 `face` 接受两种写法：
+
+- 数字 id：`"20"`
+- 中文名：`"偷笑"` / `"[呲牙]"`（自动去方括号，走 `FACE_NAMES` 反查）
+
+未知名字直接报错，不会瞎猜一个表情发出去。
+
+### 33. `qq_send_image` 支持转发收到的图
+
+`source` 新增 `qq:<messageId>`：从归档里找到那条入站消息的图片并重新发送。
+
+实现时踩到一个坑：**直接把 QQ 的图片 URL 交给 NapCat 会被拒**（`retcode=200`），因为
+`multimedia.nt.qq.com.cn` 的下载链接带短期 `rkey`，NapCat 侧拉不到。
+
+所以改成：**自己先下载成字节，再转 data URL** 交给 NapCat。
+
+```
+step1 sent message_id= 510998784
+history image msgId 510998784 | url? true
+   fetch: 200
+   bytes: 3759 | type: image/png      ← 新鲜 URL 正常
+```
+
+### 34. 已知限制：rkey 时效
+
+QQ 图片 URL 带时效（通常数小时）。过期后再转发会失败：
+
+```
+download status: 400
+cannot download; rkey likely expired
+```
+
+这不是实现缺陷，是 QQ 媒体链路本身的限制——过期图片连 QQ 客户端自己都拉不到。
+需要长期保存图片的话，应该在收到时就把字节落盘（当前只存 URL 引用，省空间）。
+
+
+## 二十、0.4.7：空间三件套（看 / 发 / 评论）
+
+### 35. 发表说说 `qq_qzone_publish`
+
+**关键发现：说说列表页 `/<uin>/311` 没有发表入口**，编辑器只在个人主页 `/<uin>` 上。原来按 `/311` 写的逻辑是错的。
+
+真实 DOM（实测）：
+
+```
+#\$1_substitutor_content      ← "说点儿什么吧" 占位符，点击后激活编辑器
+#\$1_content_content           ← 真正的 contenteditable
+a.btn-post                     ← 发表按钮
+```
+
+提交后跳回列表页确认新说说出现（取正文前 20 字做 needle），拿到证据才返回 `sent`。
+
+### 36. 评论说说 `qq_qzone_comment`
+
+列表页每条 `li.feed` 内都有「我也说一句」占位符：
+
+```
+li.feed .textinput_default        ← 点击激活
+li.feed [contenteditable][id$="_content_content"]
+li.feed a.btn-post                ← 该 feed 自己的发表按钮
+```
+
+`feed_id` 留空 = 最新一条。确认方式是该 feed 的文本变化且包含评论内容。
+
+**踩坑**：feed 列表在 frame 出现之后才异步注入，直接 `count()` 会得到 0。加了 20 秒轮询等待。
+
+### 37. `qq_qzone_read` 说说页也修了
+
+同样的懒加载问题：`read()` 原来只等 1.5 秒，说说列表还没渲染完就取文本，结果只拿到主框架。
+现在针对 `section === 'shuoshuo'` 额外等待 `li.feed` 出现（最多 15 秒）。
+
+### 实测结果
+
+```
+PUBLISH_RESULT {"status":"sent","confirmedBy":"new_shuoshuo_entry"}
+COMMENT_RESULT {"status":"sent","confirmedBy":"new_comment_entry"}
+
+feeds: 5                                    ← 原来 4 条
+newest feed: dsh-qq-access 发表测试，稍后删除 10:10
+             评论(1)
+             汝拉山区的穷木匠 : 评论测试，稍后删除 10:11
+```
+
+三项（读 / 发 / 评论）全部真实通过，不是 dry-run。
+
+
+## 二十一、0.4.8：空间操作默认后台运行
+
+`qzone.headless` 默认值从 `false` 改为 `true`——读空间、发说说、评论都不再弹 Edge 窗口。
+
+`qzone-login` 不受影响：`login()` 里硬编码 `#launch(false)`，扫码必须可见。
+
+实测无头模式：
+
+```
+config qzone.headless = true
+elapsed: 4.2s              ← 比有头更快
+read ok: true | chars: 400
+TA的说说 | 已严肃预购 | 前天13:03来自iPhone | 评论(2) ...
+```
+
+发表/评论同样验证：`COMMENT: {"status":"sent","confirmedBy":"new_comment_entry"}`。
+
+需要看得到窗口时，把 `qzone.headless` 改回 `false` 即可（排查选择器时有用）。
+
+### 38. 顺带修：读别人空间只拿到导航栏
+
+两个叠加问题：
+
+1. **等待不足**：别人的说说列表约 5 秒才渲染完，原来只等 1.5 秒
+2. **maxChars 被导航栏吃光**：主框架导航文字就有 500+ 字符，`remaining` 用完后直接 `break`，内容框架根本没读
+
+修复：
+
+- 说说/主页额外等待 `li.feed` 数量**稳定**（连续两次计数不变），上限 25 秒
+- 帧遍历顺序改为**先子框架（内容）后主框架（导航）**
+
+效果对比：
+
+```
+修复前: frames=2 chars=501  首条: QQ空间 他的主页 他的动态...
+修复后: frames=1 chars=900  首条: TA的说说 | 已严肃预购 | 前天13:03...
+```
+
+实测三个空间：主人 ✅（含评论点赞）、曹栩 ✅（37 赞 3 评论）、木木彡 ❌（对方设了访问权限，只能读到「设置了权限」提示）。
+
+
+## 二十二、0.4.9：发表/评论的确认判据是假阳性
+
+0.4.7 声称「发表成功」，实际**什么都没发出去**；评论也挂错了说说。根因是确认逻辑用文本判断。
+
+### 39. 说说发表：跳转太早 + 文本判据
+
+原逻辑：点发表 → 立刻跳列表页 → `body.includes(前20字)`。
+
+两个错：
+
+1. **跳转太早**：`emotion_cgi_publish_v6` 请求还没完成就导航走了，发表被中断
+2. **文本判据恒真**：编辑框里的文字还在 DOM 里，`includes` 必然为真
+
+现在：**留在原页**，等编辑器清空（发表已提交），再等 `div.f-item` 计数增加。
+
+```
+RESULT {"status":"sent","confirmedBy":"new_shuoshuo_entry","entriesBefore":7,"entriesAfter":8}
+```
+
+（首页说说容器是 `div.f-item`，不是列表页的 `li.feed`——这也是 before 恒为 0 的原因。）
+
+### 40. 评论：选择器把工具栏当成了评论
+
+原判据是「该 feed 文本变化且包含评论内容」——编辑器还在，文本必然包含，同样是假阳性。
+
+换成计数后又踩第二坑：`.comments_list ul > li` 把**编辑器工具栏**（本地/相册/音乐/视频/附件…）也算进去了，
+导致 `before: 0 → after: 9`、`9 → 18` 这种翻倍数字。
+
+真实评论节点是 `li.comments_item`。修正后：
+
+```
+RESULT {"status":"sent","confirmedBy":"new_comment_entry","commentsBefore":2,"commentsAfter":3}
+```
+
+### 41. 基线必须在懒加载之后取
+
+评论列表在点击「我也说一句」之后才渲染。原来在点击前取 `before`，恒为 0。
+顺序改为：点占位符 → 等编辑器 → 取基线 → 输入 → 提交 → 对比。
+
+### 42. `li.feed` 没有 id，`feed_id` 匹配失效
+
+说说列表项没有 `id` 属性，`#shuoshuoItem(feedId)` 只能退化成文本匹配。目前
+`feed_id` 传空（最新一条）是可靠的，传具体 id 需要先确认该空间是否给 feed 加了 id。
+
+
+## 二十三、0.4.10：空间图片看不见 + 评论位置错误
+
+### 43. 评论定位：`li.feed` 没有 id
+
+每条说说真正的稳定标识是评论按钮的 id：
+
+```html
+<a id="comment_btn_<uin>_<feedId>_1" class="c_tx comment_btn">
+```
+
+`li.feed` 自身没有 id 属性，所以原来按 id 匹配永远失败，只能退化成"第一条"。
+现在 `#shuoshuoItem()` 遍历 feed，比对 `comment_btn` 的 id 是否包含 `feedId`。
+
+### 44. 空间图片：读到了但没送进模型
+
+三个环节都有问题：
+
+1. **`read()` 不返回图片** —— 只返回页面文本。现在额外收集 `li.feed` 内的真实配图 URL。
+2. **过滤规则**：头像（`qlogo*.store.qq.com/qzone/`）、表情（`qzonestyle.gtimg.cn/qzone/em/`）、
+   懒加载占位（`blank.gif`）全部排除，只留真正的说说配图。
+3. **工具 render 把图片压成 JSON 文本** —— 这是最关键的：
+
+```js
+// 原来
+render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }]
+```
+
+即使 execute 返回了 `content: [{type:'image', attachment}]`，也会被 `JSON.stringify` 成字符串，
+模型只看到一串 JSON。现在 render 把 image 块原样透传：
+
+```js
+const attachments = value.content.filter(p => p?.type === 'image' && p.attachment);
+return attachments.length ? [{ type: 'text', text: JSON.stringify(rest) }, ...attachments] : [text];
+```
+
+实测：自己的空间 4 条说说里只有 1 张真配图（856×1522），其余全是头像/表情/占位符——
+所以 `imageCount: 1` 是正确结果，不是漏抓。
+
+
+## 二十四、0.4.11：空间图片超时（不是 workbuddy 的问题）
+
+先确认：`imageModelIds` 配置仍在，workbuddy 图像能力没退化。真正的报错在 `debug.log`：
+
+```
+QQ 空间图片读取失败 (TimeoutError): The operation was aborted due to timeout
+```
+
+### 45. 图片下载继承了快耗尽的工具信号
+
+`urlImageParts(urls, exec.signal)` 里的下载用的是 `combinedSignal(signal, 15_000)`——
+取的是**两者较短**。而 `qq_qzone_read` 是一次很长的调用（浏览器冷启动 + 页面加载 +
+等待 feed 稳定最多 25 秒），走到下载这一步时 `exec.signal` 往往只剩几秒。
+
+修复：图片下载改用**独立的 20 秒预算**，不再继承工具调用的剩余时间。下载是收尾动作，
+和主流程的时限无关。
+
+```js
+const budget = AbortSignal.timeout(20_000);
+const bytes = await this.imageBytes({ url, file: '' }, budget);
+```
+
+### 46. 失败原因可区分了
+
+原来所有失败都只报一句「读取失败」。现在分三类：
+
+| 日志 | 含义 |
+|---|---|
+| `QQ 空间图片下载为空` | 下载失败/超时，附 URL 前 80 字符 |
+| `QQ 空间图片类型未知` | 魔数不认识（不是 PNG/JPEG/GIF/WEBP） |
+| `QQ 空间图片读取失败` | attachment store 拒收或其他异常 |
+
+### 端到端实测
+
+```
+urls from read(): 1
+attached parts: 1
+saved: [{"bytes":63138,"mediaType":"image/webp","name":"qzone-image"}]
+```
+
+图片 63KB、webp、成功转 attachment。
+
+
+## 二十五、0.5.0：分段间隔可以自己调
+
+### 47. 原来间隔是写死的
+
+拆段发送的间隔原本由公式硬编码：
+
+```js
+interval = clamp(1000ms, 10000ms, 1000 + 字数 × 60)
+```
+
+想让她「快一点」或「更慢更像真人」都改不了，只能改代码重装。现在三个参数进了配置，左侧栏「回复节奏」卡片可以直接调：
+
+| 配置项 | 含义 | 默认 | 范围 |
+|---|---|---|---|
+| `rate.segmentMinMs` | 相邻两条之间至少等多久 | 1000ms | 0–30000 |
+| `rate.segmentMaxMs` | 再长也不超过这个上限 | 10000ms | 0–60000 |
+| `rate.segmentPerCharMs` | 每条消息按字数追加的毫秒数 | 60ms | 0–500 |
+
+面板用「秒」输入，保存时换算成毫秒；卡片底部会实时显示「好的」和一句长句分别要等几秒，避免调成看不出区别的数字。
+
+### 48. 一个隐蔽的坑：调小到 1 秒会被 3 秒覆盖
+
+`RateLimiter.wait()` 原本这样算同会话间隔：
+
+```js
+const peerGap = Math.max(this.peerGapMs, minPeerGapMs);  // peerGapMs 默认 3000
+```
+
+于是面板上填 1 秒，实际仍然是 3 秒——**设置看起来生效了，其实被静默吞掉**。这是最容易让人以为「面板是假的」的那类 bug。
+
+改法不是把 `peerGapMs` 调小（那会让所有单条回复也变得急促），而是给 `send()` 增加显式的 `paceMs` 参数：
+
+```js
+// 只有多段回复的后续段传节奏，单条消息仍走默认的 peerGapMs
+await this.send(..., index === 0 ? 0 : segmentGapMs(text, this.config.rate));
+```
+
+`wait()` 里 `paceMs > 0` 时直接用它替代 `peerGapMs`，但 `globalGapMs`（默认 1 秒）和每分钟配额仍然是硬下限，所以调成 0.3 秒也会被兜到 1 秒。
+
+### 49. 实测
+
+真实 `RateLimiter` + 真实 `splitSegments`，文本「好的，那就这么定了，晚点我再找你，记得吃饭」拆成 4 段：
+
+```
+#0 "好的"          pace=0ms      actual=0ms
+#1 "那就这么定了"   pace=1360ms   actual=1361ms
+#2 "晚点我再找你"   pace=1360ms   actual=1365ms
+#3 "记得吃饭"       pace=1240ms   actual=1246ms
+```
+
+换不同档位（同一套代码）：
+
+| 设置 | 实际间隔 |
+|---|---|
+| 最小 1 秒（低于默认 3 秒） | 1066 / 1074ms，不再被抬到 3 秒 |
+| 最小 2 秒 | 2002 / 2008ms |
+| 最小 0.3 秒 | 1015 / 1014ms，被全局 1 秒兜底 |
+| 最小 6 秒 | 6016 / 6013ms |
+
+### 50. 改动文件
+
+| 文件 | 改动 |
+|---|---|
+| `lib/config.mjs` | 新增 `rate.segmentMinMs` / `segmentMaxMs` / `segmentPerCharMs` |
+| `lib/runtime.mjs` | `segmentGapMs(text, settings)` 读配置；`send()` 增加 `paceMs` |
+| `lib/util.mjs` | `RateLimiter.wait()` 第三参数改为显式节奏，优先于 `peerGapMs` |
+| `lib/ui.mjs` | `rate` 加入 PATCHABLE 与状态返回，保存后热更新 |
+| `lib/client.js` | 「回复节奏」卡片新增三个输入框 + 实时效果预览 |
+
+改完保存即时生效，不需要重载插件（`runtime.config.rate` 在每次发送时读取）。
+
+
+### 51. 0.5.0：改「全局间隔 / 同会话间隔」也要即时生效
+
+`RateLimiter` 在构造时把 `globalGapMs` / `peerGapMs` / `maxPerMinute` 拷成实例字段，热更新只替换 `runtime.config.rate` 不会影响已经建好的限流器——改这两项会「显示保存成功但行为不变」。现在保存时同步刷新实例字段。
+
+另外 `CHANGES-LOCAL.md` 曾被 pnpm 按「同版本号」缓存，出现过 `lib/` 已是新版、说明文档仍是旧版的情况。**判断是否真的装上，请以 `lib/` 内的代码或面板上的新控件为准，不要只看版本号。**
 
 ## 安装
 

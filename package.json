@@ -1,7 +1,7 @@
 {
   "name": "dsh-qq-access",
-  "version": "0.4.0",
-  "description": "DeepSeek Harness 的个人 QQ 通道：NapCat 托管、私聊/群聊 AI 回复、本地消息归档与 QQ 空间读写，附左侧栏管理面板",
+  "version": "0.5.0",
+  "description": "DeepSeek Harness 的个人 QQ 通道：NapCat 托管、私聊/群聊 AI 回复（含图片理解）、本地消息归档与 QQ 空间读写，附左侧栏管理面板",
   "type": "module",
   "main": "./index.mjs",
   "exports": {
