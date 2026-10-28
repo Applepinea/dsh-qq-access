@@ -96,14 +96,14 @@ node cli.mjs qzone-login
 
 ### 4. 安装到 Harness
 
-交付包包含 `dsh-qq-access-0.4.0.tgz`，也可以从源码运行 `npm pack` 自行生成。
+Release 页提供 `dsh-qq-access.tgz`，也可以从源码运行 `npm pack` 自行生成。
 
-**Harness 桌面版**：打开插件管理页面，使用本地包／安装来源功能，选择或填入 `.tgz` 的完整路径，例如 `C:/Plugins/dsh-qq-access-0.4.0.tgz`。不同桌面版本的入口文字可能不同。若当前版本没有本地包入口，应先升级，或使用下面独立的 Web profile。不要手动覆盖桌面版核心包。
+**Harness 桌面版**：打开插件管理页面，使用本地包／安装来源功能，选择或填入 `.tgz` 的完整路径，例如 `C:/Plugins/dsh-qq-access.tgz`。不同桌面版本的入口文字可能不同。若当前版本没有本地包入口，应先升级，或使用下面独立的 Web profile。不要手动覆盖桌面版核心包。
 
 **Harness CLI / Web profile**：在已可运行 `dsh` 的终端中：
 
 ```powershell
-dsh plugin --profile web add C:/Plugins/dsh-qq-access-0.4.0.tgz
+dsh plugin --profile web add C:/Plugins/dsh-qq-access.tgz
 dsh web
 ```
 
