@@ -1,0 +1,5 @@
+- insert:
+    - id: qq-access
+      name: dsh-qq-access
+      config:
+        configPath: ""

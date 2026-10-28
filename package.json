@@ -1,0 +1,94 @@
+{
+  "name": "dsh-qq-access",
+  "version": "0.4.0",
+  "description": "DeepSeek Harness 的个人 QQ 通道：NapCat 托管、私聊/群聊 AI 回复、本地消息归档与 QQ 空间读写，附左侧栏管理面板",
+  "type": "module",
+  "main": "./index.mjs",
+  "exports": {
+    ".": "./index.mjs",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "dsh-qq-access": "./cli.mjs"
+  },
+  "engines": {
+    "node": ">=22.14.0",
+    "dsh": ">=0.2.1-rc.3"
+  },
+  "license": "MIT",
+  "author": "Applepinea (https://github.com/Applepinea)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Applepinea/dsh-qq-access.git"
+  },
+  "homepage": "https://github.com/Applepinea/dsh-qq-access#readme",
+  "bugs": {
+    "url": "https://github.com/Applepinea/dsh-qq-access/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "qq",
+    "onebot",
+    "napcat",
+    "qzone"
+  ],
+  "files": [
+    "index.mjs",
+    "cli.mjs",
+    "lib/",
+    "examples/",
+    "locale/",
+    "docs/",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "CHANGES-LOCAL.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ],
+      "external": [
+        "react"
+      ]
+    }
+  },
+  "dependencies": {
+    "playwright": "1.64.1",
+    "yauzl": "3.4.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-llm": "*"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-llm": {
+      "optional": true
+    }
+  },
+  "scripts": {
+    "setup": "node cli.mjs setup",
+    "doctor": "node cli.mjs doctor",
+    "qzone:login": "node cli.mjs qzone-login",
+    "napcat:install": "node cli.mjs napcat-install",
+    "napcat:enable": "node cli.mjs napcat-enable",
+    "napcat:login": "node cli.mjs napcat-login",
+    "check": "node scripts/check.mjs",
+    "test": "node --test",
+    "pack:tgz": "npm pack"
+  }
+}

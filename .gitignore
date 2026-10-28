@@ -1,0 +1,8 @@
+node_modules/
+package-lock.json.bak
+*.tgz
+*.log
+data/
+debug.log
+.DS_Store
+Thumbs.db
