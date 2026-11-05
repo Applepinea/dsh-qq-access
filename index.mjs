@@ -20,7 +20,20 @@ export async function apply(ctx, config = {}) {
   // Disposal must finish even when one stage hangs: a stuck dispose leaves the
   // fiber inactive while the event server keeps running, which shows up later as
   // "cannot get required service ... in inactive context" on every reply.
-  ctx.on('dispose', async () => {
+  // 本地补丁：dispose 逻辑同时作为 apply 的返回值交给 Cordis。实测行被移除时
+  // 'dispose' 事件没有触发，导致 /dsh-qq/api/* 路由与 5701 事件服务器泄漏，
+  // 同一进程里再次挂载必然撞 duplicate exact route。返回 disposer 是 Cordis 的
+  // 正规清理路径，配上幂等守卫，两条路径都安全。
+  let disposed = false;
+  const disposeAll = async () => {
+    if (disposed) return;
+    disposed = true;
+    try {
+      const { appendFileSync } = await import('node:fs');
+      const { join } = await import('node:path');
+      const { homedir } = await import('node:os');
+      appendFileSync(join(homedir(), '.dsh-qq-access', 'debug.log'), new Date().toISOString() + ' dispose begin\n');
+    } catch {}
     const step = async (label, run, timeoutMs = 8000) => {
       try {
         await Promise.race([
@@ -40,7 +53,8 @@ export async function apply(ctx, config = {}) {
     await step('runtime', () => runtime.stop());
     await step('napcat', () => manager?.stop());
     await step('background', () => background, 2000);
-  });
+  };
+  ctx.on('dispose', disposeAll);
   const disposers = [];
   try {
     for (const definition of makeTools(runtime)) disposers.push(ctx.tools.register(definition));
@@ -72,7 +86,9 @@ export async function apply(ctx, config = {}) {
     }
   } catch (error) {
     for (const dispose of disposers.reverse()) dispose();
-    await runtime.stop();
+    // 本地补丁：apply 失败时也走同一套完整清理（UI 路由 + 事件服务器 + runtime）。
+    await disposeAll();
     throw error;
   }
+  return disposeAll;
 }
