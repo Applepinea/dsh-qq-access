@@ -1,136 +1,167 @@
-# dsh-qq-access · NapCat 托管 + 管理面板
+# dsh-qq-access 1.0.0
 
-为 DeepSeek Harness 接入个人 QQ 私聊、群聊和 QQ 空间留言板。**Windows x64 已加入 NapCat 的安装、配置与进程管理**：首次下载官方运行包，之后随 Harness 启动，连接配置自动写好，扫码页就绪后自动打开。
+把个人 QQ 接进 DeepSeek Harness：私聊、群聊、QQ 空间，外加一套围绕「她」的能力——
+生活状态、情感关系、表情包、群聊里的自我判断。
 
-此包包含源码与可安装的 `.tgz`。NapCat 官方运行包在目标电脑下载，保留原始文件与许可证，以插件管理的独立子进程运行。你不需要另外安装、手工启动或填写 NapCat 网络配置。
+Windows x64 内置 NapCat 的安装、配置与进程管理：首次自动下载官方运行包，
+之后随 Harness 启动，扫码一次就长期可用。不需要手动装 NapCat、手动填网络配置。
+
+---
 
 ## 功能
 
-| 功能 | 行为 |
+| 模块 | 能力 |
 | --- | --- |
-| 安装 | 固定官方 `v4.18.41` Windows Node 运行包，校验大小与 SHA256 后解压 |
-| 配置 | 自动生成 API token、事件签名、本机 API 和上报连接 |
-| 登录 | 自动打开本机 NapCat WebUI，用户本人扫码；等待期间 Harness 正常打开 |
-| 维护 | 可查看启动／待扫码／在线状态，崩溃后最多重启 2 次，退出时停止自有进程树 |
-| QQ 聊天 | 接收可上报的全部入站消息，默认私聊自动回复、群聊被 @ 时回复 |
-| 历史 | 本地归档、搜索，或调用 QQ 历史接口分页查询 |
-| 图片 | 私聊/群聊里的图片转成模型可见的 image content（PNG / JPEG / GIF / WEBP，单条最多 4 张，可关） |
-| 空间 | 独立浏览器登录，读取可见文字，在留言板发表纯文本留言 |
-| 面板 | 左侧栏「QQ 接入」：自动回复开关、批量窗口与轮询、回复范围白名单、NapCat 托管、人格编辑、在线状态 |
+| 接入 | NapCat 托管启动 / 外部实例两种模式，断线自动重连，扫码页自动打开 |
+| 消息 | 归档、按关键词搜索、按 id 取原文（含图片）、引用上下文还原 |
+| 回复 | 私聊 / 群聊分别配置；多条内容分段发送，间隔按字数自适应 |
+| 群聊判断 | `smart` 模式：被 @、被引用、被叫名字，或内容她感兴趣时才回 |
+| 看图 | 收到的图片直接进模型视野；可以发图、发系统表情、发表情包 |
+| 链接 | B 站 / YouTube / 推特 / 小红书 / Instagram / 小黑盒，回复前先读标题和内容 |
+| QQ 空间 | 读说说、发说说、评论、删除；可定时按时间窗主动发动态 |
+| 表情包 | 本地图库，按情绪搜索、自动收集、模型自动分类 |
+| 虚拟人生 | 一周日程 + 穿搭池 + 三餐池，一次生成按周循环 |
+| 情感关系 | 8 维情感 + 好感/亲密度 + 四阶段演进，语气随之变化 |
+| 联网 | 实时搜索、网页正文提取、多路并行搜索 |
+| 时间感 | 每条历史消息带「多久以前」，长间隔单独提示 |
 
-访问范围限登录账号的权限和 QQ 接口可提供的数据，不保证补全安装前全部历史。图片会转成模型可见的内容（`reply.vision` 可关）；语音等其它媒体仍是类型占位文字。空间不含说说评论、发说说、相册导出和权限绕过。
-
-## Windows x64 新安装
-
-准备 Node.js **22.14+**（建议 24 LTS）、提供当前 Agent／工具接口的 Harness（参考 `0.2.1-rc.4`），以及 QQ 空间使用的 Edge 浏览器。
-
-1. 解压后进入 `dsh-qq-access`，用 PowerShell 执行：
+## 安装
 
 ```powershell
-npm ci
+dsh plugin --profile desktop add <本 tgz 完整路径>
+```
+
+装完重启 DSH，左侧栏出现「QQ 接入」。首次使用先初始化配置：
+
+```powershell
 node cli.mjs setup
 ```
 
-输入接入的 QQ 号。管理员 QQ 号可留空，留空时只在电脑上的 Harness 管理。若填写，应使用另一个 QQ 号，登录号自身的出站消息不会触发自动回复。
+### 其他命令
 
-Windows x64 的 `setup` 自动启用托管模式、生成密钥并下载运行包。压缩包约 **118.3 MiB**，首次需要联网，之后复用本机安装。下载失败可运行 `node cli.mjs napcat-install` 重试。默认配置在 `%USERPROFILE%\.dsh-qq-access\config.json`，不会覆盖已有文件。
-
-2. 从 [Releases](https://github.com/Applepinea/dsh-qq-access/releases) 下载最新的 `dsh-qq-access.tgz`，在 Harness 桌面版插件管理中选中它（填完整路径）。或在 CLI / Web profile 执行：
-
-```powershell
-dsh plugin --profile web add C:/Plugins/dsh-qq-access.tgz
-dsh web
-```
-
-如果桌面版本没有本地包入口，请升级或使用 Web profile；profile 必须与实际启动环境一致。
-
-插件自动启动 NapCat，扫码页就绪后打开浏览器。用步骤 1 的 QQ 号扫码后自动接通。无需手填 NapCat 的 API 地址、token 或上报设置。未弹出扫码页时可执行：
-
-```powershell
-node cli.mjs napcat-login
-```
-
-如果 Harness 已运行 NapCat，此命令只打开现有登录页；否则启动临时登录进程，扫码成功后关闭，再由 Harness 启动正式实例。默认等待 10 分钟，超时后重载插件重新尝试。
-
-3. QQ 空间仍需独立登录：
-
-```powershell
-node cli.mjs qzone-login
-```
-
-在独立 Edge 窗口中登录同一个 QQ 号，回终端按回车。空间登录状态与 NapCat 分开；关闭登录窗口后再调用空间工具。空间页面结构、权限和验证码需要在目标机器验证，结果不明确时返回 `uncertain`，应先查看真实页面，不要直接重发。
-
-## 从 0.1.0 升级
-
-解压新源码、执行 `npm ci`，然后运行：
-
-```powershell
-node cli.mjs napcat-enable
-```
-
-此命令备份原配置，保留 QQ 号、访问范围、人设和消息密钥，再启用托管并准备运行包。随后在 Harness 安装新 `.tgz` 替换旧包并重载。
-
-旧配置不会被静默切换：没有 `napcat` 段时仍为 `external` 模式。若旧的手动 NapCat 已运行且账号、密钥一致，插件复用它，不修改或停止这个外部进程；要完全切换为托管，先退出旧实例再重载插件。Linux、macOS、Windows ARM 当前使用 [外部模式](docs/EXTERNAL_MODE.md)。
-
-## 离线准备
-
-从 [官方固定版本 Release](https://github.com/NapNeko/NapCatQQ/releases/tag/v4.18.41) 下载 `NapCat.Shell.Windows.Node.zip`，在已启用托管的配置下执行：
-
-```powershell
-node cli.mjs napcat-install --archive C:/Downloads/NapCat.Shell.Windows.Node.zip
-```
-
-文件必须与固定版本及 SHA256 对应，不能用 Framework、普通 Shell 或 OneKey 包代替。本版不自动升级未来版本。
-
-## 使用与设置
-
-在 Harness 中可以说“查看 QQ 接入状态”“列出我的群”“读取好友 234567890 最近 30 条消息”“给 QQ 234567890 发：今晚八点见”或“在 QQ 234567890 的空间留言板留言：周末快乐”。
-
-发送和留言使用唯一 `request_id`，重试相同操作必须复用标识。只有 `status: sent` 表示成功，`pending` 或 `uncertain` 需要先核对实际结果。
-
-| 配置项 | 默认与用途 |
+| 命令 | 用途 |
 | --- | --- |
-| `napcat.mode` | 新 Windows x64 配置为 `managed`；外部接入为 `external` |
-| `napcat.autoInstall` | `true`，缺少运行包时自动安装 |
-| `napcat.autoOpenLogin` | `true`，自动打开本机登录页 |
-| `napcat.webuiPort` | `6099`，不得与 API、事件接收端口重复 |
-| `napcat.maxRestarts` | `2`，每次加载插件期间的重启预算 |
-| `reply.private` | `true`，私聊自动回复 |
-| `reply.group` | `mention`，可改为 `off` 仅归档或 `all` 每条回复 |
-| `access.privateMode` / `access.groupMode` | `all`，可改 `allowlist` 或 `disabled` |
-| `access.privateIds` / `access.groupIds` | 对应白名单，QQ 号／群号使用字符串 |
-| `ownerIds` | 管理员私聊账号列表，默认空 |
-| `ownerHarnessTools` | `false`，进一步开放管理员的宿主其他工具权限 |
-| `persona` | 自定义称呼、性格、语气、回复习惯 |
-| `retentionDays` | `30`，本插件消息归档保留天数 |
+| `node cli.mjs setup` | 生成配置文件 |
+| `node cli.mjs doctor` | 只读检查：连接、NapCat、QQ 空间 cookie |
+| `node cli.mjs napcat-install` | 预下载 NapCat 运行包 |
+| `node cli.mjs napcat-enable` | 切换为托管模式 |
+| `node cli.mjs napcat-login` | 重新打开扫码页 |
 
-修改后重载插件。普通联系人只允许本会话聊天和历史查询，不能操作文件、终端、其他私聊或空间。管理员权限只认传输层确认的私聊账号，在群内按普通群成员处理。
+## 配置
 
-聊天内容在用于回复或主动查询时会进入 Harness 配置的模型服务。归档保留期不会删除 Harness 自己保存的会话、模型服务记录、QQ 或空间登录状态。
+配置默认在 `~/.dsh-qq-access/config.json`。大部分项可以在面板里改，改完即时生效。
 
-## 排查与验证
+| 键 | 说明 |
+| --- | --- |
+| `selfId` | 登录的 QQ 号 |
+| `ownerIds` | 管理员 QQ 号，只有这些人能用跨会话工具 |
+| `access.privateMode` / `groupMode` | `all` / `allowlist` / `disabled` |
+| `reply.private` | 私聊是否自动回复 |
+| `reply.group` | `off` / `mention` / `smart` / `all` |
+| `reply.smartThreshold` | smart 模式的阈值（1–10，越高越安静） |
+| `reply.selfNames` | 她在群里的别名，被叫到就回 |
+| `reply.interests` | 感兴趣的话题词 |
+| `retentionDays` | 归档保留天数；`0` 表示永久保存 |
+| `emotion` | 情感与关系：开关、隐私级别、分析模型 |
+| `qzoneProactive` | 主动发动态：每天条数、发送概率、时间窗、时段语气 |
+| `model` | 指定 provider / model；留空跟随 Harness 默认 |
 
-`node cli.mjs doctor` 只读检查安装与连接，不发送消息。尚未启动 Harness 或尚未扫码时，API 离线不代表安装失败。`qq_status.napcat.state` 可查看启动、待扫码、在线状态；状态工具不返回 API 或 WebUI 密钥。
+### 人格与能力是两层
 
-API、上报接收和登录页只绑定本机。端口冲突时退出冲突程序或修改配置后重载。控制台日志位于配置对应的 `data/napcat/logs/console.log`，可能含二维码或登录页密钥，仅用于本机排查。异常退出留下锁文件时，先确认对应进程已退出，再删除提示的锁文件。
+系统提示分成两个独立 section，面板只能改前一层：
 
-本版已在 Linux 做本地测试，并实际下载、校验、解压固定的官方运行包；**未在 Windows 运行 QQ 原生组件、未登录真实 QQ，也未完成真实 QQ 空间验收**。详见 [验证说明](docs/VALIDATION.md)。
+| 层 | 内容 | 来源 |
+| --- | --- | --- |
+| `qq-access-persona` | 她是谁、怎么说话、输出格式 | 面板「人格设定」，可编辑 |
+| `qq-access-capabilities` | 36 个工具各自「什么时候该用」 | 插件内置 `lib/capabilities.mjs` |
 
-```powershell
-npm run check   # 清单字段、文件完整性、语法、客户端 bundle 自检
-npm test        # 冒烟测试：导出形状、补丁条目、配置校验，不需要宿主
-npm run release # 自检 + 测试 + 升 patch + 打包到 dist/dsh-qq-access.tgz
+分开的原因：能力清单如果拼进人格字符串，用户每次保存人格都会覆盖它，
+而且长人格会把能力说明挤出模型的注意力。能力层还会按当前会话**实际可调用的工具**
+过滤——群聊里只有 3 个工具可用，就只列这 3 个。
+
+## 群聊回复判断
+
+`smart` 模式（默认）分两类：
+
+**无条件回复**：被 @、引用了她的消息、正文出现她的名字或 QQ 号。
+
+**打分**（够阈值才回）：
+
+| 信号 | 分值 |
+| --- | --- |
+| 像在对人说话（「你在干嘛」） | 3 |
+| 向群里提问（「有没有人知道」） | 3 |
+| 单独的 `？` 结尾 | 2 |
+| 命中一个兴趣词 | 3（每多一个 +1） |
+| 命中学习到的话题 | 2 + 命中次数 |
+| 内容超过 30 字 | 1 |
+
+默认阈值 3。沉默是默认——所有规则只能增加回复的理由。
+
+## 情感与关系
+
+8 维情感（喜悦 / 信任 / 恐惧 / 惊讶 / 悲伤 / 厌恶 / 愤怒 / 期待）
+加好感度（-100~100）与亲密度（0~100）双核，四个阶段：
+
+| 阶段 | 进入门槛 | 特征 |
+| --- | --- | --- |
+| 初识期 | — | 好感驱动 |
+| 深化期 | 复合分 ≥ 55 | 互动平衡 |
+| 承诺期 | 复合分 ≥ 80 | 亲密主导 |
+| 共生期 | 复合分 ≥ 95 | 完全融合 |
+
+好感为负时切换到独立区制：冷淡期 / 反感期 / 敌对期，此时亲密度权重归零。
+阶段有 5 分滞后带，进阶后有过渡保护，避免分数倒退。
+
+单轮变化由代码钳制（好感 ±5、情感 ±3），不信任模型直接写分数。
+
+## 时间感
+
+每条历史消息都带：
+
+```json
+{ "time": "2026-11-06 20:30", "ago": "昨天晚上", "since_previous": "20 小时" }
 ```
 
-`check` 会校验 `dsh.bundle.patch` 指向的补丁、`exports` 与 `files` 里的每个路径是否真实存在，以及客户端 bundle 里 `require()` 的宿主模块是否都写进了 `dsh.client.external`。宿主接口契约测试（`tools.guard`、`agents.create` 等）需要真实 DSH 包，不在本仓库内。
+上一轮距今超过 2 小时时，额外给出 `conversation_idle` 说明。
+没有这些字段时，模型会把一周前的消息当成刚刚说的。
 
-发版只需一条命令，文档里不写版本号，版本只在 `package.json` 维护：
+## 安全边界
 
+- API、事件接收和登录页只绑定 `127.0.0.1`。
+- 普通 QQ 联系人只能读本会话历史，不能跨会话操作、不能碰文件和终端。
+- 管理员权限只认传输层确认的私聊账号，群内按普通成员处理。
+- 写操作（发消息、发说说、评论）都走幂等账本，同一 `request_id` 不会重复执行。
+- 返回 `uncertain` 时不会当作成功，也不会自动重发。
+
+## 排查
+
+`node cli.mjs doctor` 只读检查，不发消息。还没扫码时 API 离线是正常的。
+
+控制台日志在配置对应的 `data/napcat/logs/console.log`，可能含二维码或登录密钥，
+仅用于本机排查。
+
+## 开发
+
+```bash
+npm install
+npm run doctor          # 只读自检
 ```
-npm run release          # 0.5.0 → 0.5.1
-npm run release minor    # 0.5.0 → 0.6.0
-```
 
-产物固定叫 `dist/dsh-qq-access.tgz`，上传到 Release 时不用改名。
+CI 会跑三件事：所有文件的 `node --check`、一次真实模块加载、
+以及工具清单与白名单的一致性检查（这个项目出过好几次清单漂移）。
 
-本项目自写代码按 MIT 发布；NapCat 与官方运行包各组成部分遵循上游许可，本插件的 MIT 许可不代替它们的许可。接口和运行包依据见 [来源说明](docs/SOURCES.md)。
+## 更多文档
+
+| 文档 | 内容 |
+| --- | --- |
+| [CHANGELOG.md](CHANGELOG.md) | 各版本的功能变化 |
+| [CHANGES-LOCAL.md](CHANGES-LOCAL.md) | 开发记录：为什么这样实现、踩过哪些坑 |
+| [docs/EXTERNAL_MODE.md](docs/EXTERNAL_MODE.md) | 连接已有 NapCat 实例 |
+| [docs/VALIDATION.md](docs/VALIDATION.md) | 哪些验证过、哪些没有 |
+| [docs/SOURCES.md](docs/SOURCES.md) | 接口依据与上游项目来源 |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | 开发约定与提交前检查 |
+
+## 许可
+
+MIT，见 [LICENSE](LICENSE)。

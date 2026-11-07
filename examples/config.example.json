@@ -2,6 +2,7 @@
   "selfId": "123456789",
   "ownerIds": [],
   "dataDir": "./data",
+
   "onebot": {
     "apiUrl": "http://127.0.0.1:3000",
     "token": "REPLACE_WITH_RANDOM_API_TOKEN_32_CHARS",
@@ -11,46 +12,7 @@
     "port": 5701,
     "secret": "REPLACE_WITH_RANDOM_EVENT_SECRET_32_CHARS"
   },
-  "access": {
-    "privateMode": "all",
-    "groupMode": "all",
-    "privateIds": [],
-    "groupIds": [],
-    "blockedUsers": [],
-    "blockedGroups": []
-  },
-  "reply": {
-    "private": true,
-    "group": "mention",
-    "maxChars": 2000,
-    "contextMessages": 20,
-    "concurrency": 4,
-    "maxLiveSessions": 64,
-    "maxQueuePerConversation": 20,
-    "maxQueuedTotal": 100,
-    "timeoutMs": 180000,
-    "idleMs": 1800000
-  },
-  "retentionDays": 30,
-  "ownerHarnessTools": false,
-  "model": {},
-  "rate": {
-    "globalGapMs": 1000,
-    "peerGapMs": 3000,
-    "maxPerMinute": 20
-  },
-  "qzone": {
-    "enabled": true,
-    "channel": "msedge",
-    "headless": false,
-    "profileDir": "./data/qzone-profile",
-    "timeoutMs": 30000,
-    "guestbookFrame": "tgb",
-    "editorFrame": "veditor1_Iframe",
-    "submitSelector": "#btnPostMsg",
-    "itemSelector": "#msgList > li, #msgList .msg_item, .msg_list .msg_item, .msgList .msgItem"
-  },
-  "persona": "你是一名友好自然的 AI QQ 助手。用中文简洁聊天，不发送思考过程、工具日志或其他人的私聊内容。",
+
   "napcat": {
     "mode": "managed",
     "autoInstall": true,
@@ -59,5 +21,115 @@
     "webuiToken": "REPLACE_WITH_RANDOM_WEBUI_TOKEN_32_CHARS",
     "loginTimeoutMs": 600000,
     "maxRestarts": 2
+  },
+
+  "access": {
+    "privateMode": "all",
+    "groupMode": "all",
+    "privateIds": [],
+    "groupIds": [],
+    "blockedUsers": [],
+    "blockedGroups": []
+  },
+
+  "reply": {
+    "private": true,
+    "group": "smart",
+    "smartThreshold": 3,
+    "selfNames": [],
+    "interests": [],
+    "learnInterests": true,
+    "mentionSender": true,
+    "maxChars": 2000,
+    "contextMessages": 20,
+    "maxImages": 4,
+    "linkParse": true,
+    "linkMaxImages": 9,
+    "concurrency": 4,
+    "maxLiveSessions": 64,
+    "maxQueuePerConversation": 20,
+    "maxQueuedTotal": 100,
+    "timeoutMs": 180000,
+    "idleMs": 1800000
+  },
+
+  "rate": {
+    "segmentMinMs": 1000,
+    "segmentMaxMs": 10000,
+    "segmentPerCharMs": 60,
+    "globalGapMs": 1000,
+    "peerGapMs": 3000,
+    "maxPerMinute": 20
+  },
+
+  "poll": {
+    "enabled": true,
+    "intervalMs": 60000,
+    "count": 10
+  },
+
+  "retentionDays": 30,
+  "ownerHarnessTools": false,
+  "model": {},
+
+  "persona": "你是一名友好自然的 QQ 助手。用中文简洁聊天，不发送思考过程、工具日志或其他人的私聊内容。",
+
+  "emotion": {
+    "enabled": false,
+    "perSession": false,
+    "useModel": true,
+    "provider": "",
+    "model": "",
+    "inject": true,
+    "privacyLevel": 1,
+    "significanceThreshold": 5,
+    "maxProfiles": 50
+  },
+
+  "life": {
+    "enabled": true,
+    "inject": true,
+    "proactive": false,
+    "proactivePrivate": true,
+    "proactiveGroup": false,
+    "proactiveMaxPerDay": 3,
+    "proactiveMinGapMinutes": 90,
+    "proactiveTargets": []
+  },
+
+  "memes": {
+    "enabled": true,
+    "maxEntries": 5000,
+    "autoCollect": false,
+    "autoCollectChance": 0.2,
+    "requireApproval": true,
+    "visionClassify": true,
+    "autoSend": false,
+    "autoSendChance": 0.15
+  },
+
+  "search": {
+    "enabled": true,
+    "apiKey": "",
+    "timeoutMs": 30000
+  },
+
+  "qzone": {
+    "enabled": true,
+    "timeoutMs": 30000,
+    "cookieTtlMs": 600000
+  },
+
+  "qzoneProactive": {
+    "enabled": false,
+    "maxPerDay": 1,
+    "dailyChance": 100,
+    "timeTone": true,
+    "windowStart": "08:00",
+    "windowEnd": "23:00",
+    "minGapMinutes": 180,
+    "topic": "",
+    "useLife": true,
+    "allowDetails": true
   }
 }

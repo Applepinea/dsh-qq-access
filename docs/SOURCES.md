@@ -1,6 +1,7 @@
-# 接口依据
+# 接口依据与上游来源
 
-核对日期：2026-10-27（Asia/Taipei）。以下为项目维护方的文档、源码或公开包；网页和分支会随上游更新。
+本插件的接口实现参考了以下公开文档与源码。网页和分支会随上游更新，
+这里记录的是核对时的依据。
 
 ## DeepSeek Harness
 
@@ -10,50 +11,83 @@
 - [Agent 创建、setup、followup 与 whenIdle](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/core/agent/README.md)
 - [工具注册、限制与 guard](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/core/tools/README.md)
 - [宿主消息工厂](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/llm/llm/src/message.ts)
-- [插件管理、安装来源与 profile](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/boot/plugin-manager/README.md)
-- [桌面宿主与外部插件依赖解析](https://github.com/deepseek-ai/deepseek-harness/blob/master/.agents/notes/implemented/architecture/2026-09-08-desktop-bundled-runtime-and-external-plugins.md)
 
-此外检查了 npm 发布的 `@deepseek-ai/dsh-tools@0.2.1-rc.4` 与 `@deepseek-ai/dsh-llm@0.2.1-rc.4`。本插件对输入参数做自行校验，并使用 canonical object output，避免把不受宿主 JSON Schema 子集支持的数值边界字段放进工具 schema。
+插件侧的关键约束：
 
-## NapCat
+| 约束 | 影响 |
+| --- | --- |
+| `Session` 只有 `seq` / `eventAt()`，没有 `events` 数组 | 用模块级 `sessionEventList()` 兼容两种形状 |
+| `agents.create()` 需要显式 `agentOptions` | 不传的话会话建了但零事件 |
+| `tools.restrict({allow})` 在模型看到工具之前过滤 | 白名单漏一个，那个工具就等于不存在 |
+| `output.render()` 决定模型看到什么 | 图片必须原样透传，否则模型看不到 |
 
-- [维护方文档](https://napneko.github.io/guide/napcat)
-- [网络配置源码](https://github.com/NapNeko/NapCatQQ/blob/main/packages/napcat-onebot/config/config.ts)
-- [HTTP 上报的 token 与 X-Signature 生成逻辑](https://github.com/NapNeko/NapCatQQ/blob/main/packages/napcat-onebot/network/http-client.ts)
-- [私聊历史源码](https://github.com/NapNeko/NapCatQQ/blob/main/packages/napcat-onebot/action/go-cqhttp/GetFriendMsgHistory.ts)
-- [群聊历史源码](https://github.com/NapNeko/NapCatQQ/blob/main/packages/napcat-onebot/action/go-cqhttp/GetGroupMsgHistory.ts)
-- [维护方私聊历史接口说明](https://napcat.apifox.cn/226659174e0)
+## OneBot v11 / NapCat
 
-上报签名依据源码确认：HTTP 客户端的 `token` 作为 HMAC-SHA1 密钥，对实际上报 JSON 字节签名。历史接口的 `message_seq` 使用字符串，首次查询为 `"0"`。
+- [OneBot v11 标准](https://github.com/botuniverse/onebot-11)
+- [NapCatQQ](https://github.com/NapNeko/NapCatQQ)
 
-## 0.2.0 托管运行包
+用到的接口：
 
-- [固定官方 Release v4.18.41](https://github.com/NapNeko/NapCatQQ/releases/tag/v4.18.41)
-- [该 Release 的资产元数据](https://api.github.com/repos/NapNeko/NapCatQQ/releases/tags/v4.18.41)
-- [官方 Windows Node 运行包组装流程](https://github.com/NapNeko/NapCatQQ/blob/v4.18.41/.github/workflows/release-publish.yml)
-- [Node 运行包入口](https://github.com/NapNeko/NapCatQQ/blob/v4.18.41/packages/napcat-develop/index.js)
-- [工作目录覆盖规则](https://github.com/NapNeko/NapCatQQ/blob/v4.18.41/packages/napcat-common/src/path.ts)
-- [账号专用配置命名](https://github.com/NapNeko/NapCatQQ/blob/v4.18.41/packages/napcat-core/helper/config-base.ts)
-- [OneBot 配置名 onebot11](https://github.com/NapNeko/NapCatQQ/blob/v4.18.41/packages/napcat-onebot/config/index.ts)
-- [WebUI 配置字段](https://github.com/NapNeko/NapCatQQ/blob/v4.18.41/packages/napcat-webui-backend/src/helper/config.ts)
-- [上游许可证](https://github.com/NapNeko/NapCatQQ/blob/v4.18.41/LICENSE)
-- [流式 ZIP 读取库 yauzl](https://github.com/thejoshwolfe/yauzl)
+| 接口 | 用途 |
+| --- | --- |
+| `send_private_msg` / `send_group_msg` | 发消息，支持消息段数组 |
+| `get_msg` | 按 id 取消息原文（引用上下文） |
+| `get_friend_list` / `get_group_list` / `get_group_member_info` | 联系人与群资料 |
+| `get_cookies` | 取 QQ 空间 cookie（`uin` / `skey` / `p_skey`） |
+| `get_group_msg_history` | 轮询补漏 |
+| `delete_msg` | 撤回自己发的消息 |
 
-安装规格固定为 `NapCat.Shell.Windows.Node.zip`，大小 124089498 字节，SHA256 为 `51fbb10e7bcd56b0c2a6de86c37811e7518330e48a137ac689ab1e4d8627d3f0`。此摘要已与实际下载文件匹配。官方引擎以独立进程启动，原始代码及二进制不包含在本插件交付压缩包中，安装时从上游下载。
+NapCat 运行包固定为官方 `v4.18.41` Windows Node 版本，安装前校验大小与 SHA256。
 
-管理器通过 `NAPCAT_WORKDIR` 把可写配置与日志放在专用目录；生成 `onebot11_<QQ号>.json` 和 `webui.json`。原生启动方式与官方 `napcat.bat` 一致：运行包自己的 `node.exe index.js`，追加 `-q <QQ号>` 供 QQ 登录逻辑使用。
+## QQ 空间
 
-## QQ 空间浏览器
+- 接口通过 NapCat 的 cookie 访问 `user.qzone.qq.com`
+- `g_tk` 由 `p_skey` 做 DJB 哈希得出：`hash = 5381; hash += (hash<<5) + ch; hash & 0x7fffffff`
+- 说说用 `topicId = {hostUin}_{tid}__1` 定位
+- 响应可能是 JSONP，也可能是 HTML 包裹的 `frameElement.callback({...})`
 
-- [Playwright 持久登录状态](https://playwright.dev/docs/auth)
-- [Playwright Frame API](https://playwright.dev/docs/api/class-frame)
-- [Playwright 输入操作](https://github.com/microsoft/playwright/blob/main/docs/src/input.md)
-- [现有留言板嵌套编辑器结构的历史代码参考](https://gist.github.com/Arnoldnuo/be81413ca2b0461fde98)
+早期版本用 Playwright 驱动真实网页，问题包括：评论落到错误的说说、冷启动 30 秒超时、
+`skey` 几小时失效、每次操作弹窗。改成纯 HTTP 后这些问题都不存在。
 
-留言板 DOM 参考属于历史页面结构线索，不能证明 2026 年所有账号的当前页面一致。因此选择器可配置，且没有把本环境未执行的真实空间测试写成成功。插件通过浏览器自身的登录状态工作，不要求向 Harness 粘贴 QQ 密码或浏览器 Cookie。
+## 集成的上游插件
 
-## 官方 QQ Bot 插件的区别
+以下项目是 AstrBot 插件，实现语言不同，这里是按其机制重新实现，不是移植代码。
 
-[腾讯维护的 dsh-qqbot](https://github.com/tencent-connect/dsh-qqbot) 提供 QQ Bot 通道。本项目要处理个人账号会话和空间留言，因而采用不同的接入实现，不把官方机器人接口描述成个人 QQ 全账号读取接口。
+| 项目 | 集成了什么 | 丢弃了什么 |
+| --- | --- | --- |
+| [astrbot_plugin_parser](https://github.com/) | 6 个平台的链接解析思路 | 平台特有的鉴权细节 |
+| [astrbot_plugin_meme_manager](https://github.com/) | 表情包图库、按情绪检索 | 命令式管理界面 |
+| [astrbot_plugin_stealer](https://github.com/) | 自动收集表情 | — |
+| [astrbot_plugin_qzone_pr](https://github.com/) | QQ 空间读写 | 浏览器自动化 |
+| [astrbot_plugin_qq_tools](https://github.com/) | 戳一戳、点赞、群管理 | — |
+| [astrbot_plugin_anysearch](https://github.com/) | MCP 联网搜索 | — |
+| [astrbot_plugin_virtual_life](https://github.com/) | 一周日程 + 穿搭 + 三餐 | 每日重新生成、打断评分 |
+| [EmotionAI-Pro](https://github.com/asakiyoshi/EmotionAI-Pro) | 8 维情感、好感/亲密度双核、四阶段、滞后带、过渡保护、负好感区制 | 排行榜、缓存统计、备份轮转等命令功能 |
 
-本项目仅参考公开接口契约与结构，交付的适配层和业务实现为新写代码。第三方运行依赖依其各自许可证分发。
+### EmotionAI-Pro 的具体取舍
+
+保留（会改变她说话的方式）：
+
+- 8 维情感模型：joy / trust / fear / surprise / sadness / disgust / anger / anticipation
+- 好感度（-100~100）与亲密度（0~100）双核
+- 四阶段：初识 → 深化 → 承诺 → 共生
+- 5 分滞后带，防止阶段在边界抖动
+- 过渡保护：进阶后复合分不低于上一阶段峰值
+- 亲密度增益：过渡期 ×4.0 / ×3.6 / ×3.0 / ×1.0
+- 负好感独立区制：冷淡 / 反感 / 敌对，此时亲密度权重归零
+- 关键词强度分析（模型不可用时的降级路径）
+
+丢弃（只为命令界面存在）：
+
+- `/好感排行`、`/负好感排行`、`/关系阶段`
+- `/缓存统计`、`/备份数据`、`/修复互动统计`
+- `/调试事件`、`/调试记忆`
+- TTL 缓存分片、备份轮转
+
+## 依赖
+
+| 包 | 用途 |
+| --- | --- |
+| `yauzl` | 解压 NapCat 运行包 |
+
+QQ 空间不需要浏览器，所以没有 Playwright 依赖。

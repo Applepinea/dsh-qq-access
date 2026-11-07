@@ -4,9 +4,11 @@ import { makeTools } from './lib/tools.mjs';
 import { NapcatManager } from './lib/napcat.mjs';
 import { checkSignal } from './lib/util.mjs';
 import { registerUi } from './lib/ui.mjs';
+import { MemeLibrary } from './lib/memes.mjs';
+import { MemeClassifier } from './lib/meme-classify.mjs';
 
 export const name = 'qq-access';
-export const inject = ['agents', 'tools', 'systemPrompt'];
+export const inject = ['agents', 'tools', 'systemPrompt', 'llm'];
 
 export async function apply(ctx, config = {}) {
   const resolved = await loadConfig(config.configPath || defaultConfigPath());
@@ -15,6 +17,23 @@ export async function apply(ctx, config = {}) {
   if (typeof createUserMessage !== 'function') throw new Error('Harness 未提供 createUserMessage，请升级 Harness。');
   const logger = ctx.logger ?? console;
   const runtime = new QQRuntime(resolved, { ctx, createUserMessage, logger });
+  // The sticker library lives beside the archive, so a plugin reinstall keeps it.
+  if (resolved.memes?.enabled !== false) {
+    runtime.memes = new MemeLibrary({
+      dataDir: resolved.dataDir,
+      maxEntries: resolved.memes?.maxEntries ?? 5000,
+      logger,
+    });
+    runtime.memes.init().catch(error => logger.warn?.('表情包图库初始化失败：' + error.message));
+    if (resolved.memes?.visionClassify !== false) {
+      runtime.classifier = new MemeClassifier(runtime, { logger });
+      // Classification is background work: it must never delay the Host's ready
+      // handshake, and stickers simply stay unclassified if it cannot run.
+      runtime.memes.init()
+        .then(() => runtime.classifier.runOnce({ max: 6 }))
+        .catch(error => logger.warn?.('表情包自动分类失败：' + error.message));
+    }
+  }
   let manager, background;
   const disposeUi = registerUi(ctx, runtime, resolved.configPath);
   // Disposal must finish even when one stage hangs: a stuck dispose leaves the
