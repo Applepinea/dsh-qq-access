@@ -7,8 +7,10 @@
 这个插件是在真实环境里开发和调试出来的：真实的 QQ 号、真实的 NapCat、
 真实的群聊与私聊、真实的 QQ 空间。功能层面的行为都有实测依据。
 
-但**仓库里没有自动化测试套件**。早期版本有过 `tests/` 目录，后来在重构中被移除，
-所以不要指望 `npm test` 能跑起来——`package.json` 里也不再声明这个脚本。
+但仓库里的自动化测试只覆盖「静态约定」这一层：`tests/smoke.test.mjs` 检查
+导出形状、补丁条目、配置校验，`npm test` 可以跑（11 个用例，其中「插件导出的形状」
+需要宿主 `@deepseek-ai/dsh-llm`，没装时自动跳过）。下面这些行为层面的结论不来自
+这些用例，而是来自真机实测。
 
 ## 已验证的机制
 
@@ -88,11 +90,20 @@
 node cli.mjs doctor
 ```
 
-CI 会跑：
+`npm run check` 会跑：
 
-1. 所有 `.mjs` / `.js` 的 `node --check`
-2. 一次真实模块加载（防止引用不存在的符号）
-3. 工具清单与白名单的一致性检查
+1. 清单字段与 `dsh` 声明（`dsh.bundle.patch`、`dsh.client.external`）
+2. `files` / `exports` / `bin` 指向的文件是否都存在
+3. 客户端 bundle 里的 `require` 是否都声明为 external
+4. 所有 `.mjs` / `.js` 的 `node --check`
 
-第 2 和第 3 项是因为这个项目实际出过这类问题：语法检查通过但运行时报错，
+`npm test` 跑 `tests/smoke.test.mjs`。
+
+还有两项没进自动化，需要手动跑：
+
+- `node -e "import('./index.mjs')"`：真实模块加载，防止引用了不存在的符号
+- 工具清单与白名单比对：`lib/tools.mjs` 里 `tool(...)` 的个数要等于
+  `lib/access.mjs` 的 `pluginToolNames`（当前都是 36 个）
+
+后两项是因为这个项目实际出过这类问题：语法检查通过但运行时报错，
 以及新增工具后忘了同步白名单，导致模型看不到那个工具。
