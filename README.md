@@ -1,4 +1,4 @@
-# dsh-qq-access 1.0.0
+# dsh-qq-access
 
 把个人 QQ 接进 DeepSeek Harness：私聊、群聊、QQ 空间，外加一套围绕「她」的能力——
 生活状态、情感关系、表情包、群聊里的自我判断。
