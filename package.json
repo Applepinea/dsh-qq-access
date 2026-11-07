@@ -39,6 +39,7 @@
     "LICENSE",
     "docs/",
     "CHANGELOG.md",
+    "CHANGES-LOCAL.md",
     "CONTRIBUTING.md"
   ],
   "dsh": {

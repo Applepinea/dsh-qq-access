@@ -27,17 +27,48 @@ Windows x64 内置 NapCat 的安装、配置与进程管理：首次自动下载
 
 ## 安装
 
+**方式一：从 npm 装**（推荐，升级时重跑一次即可）
+
 ```powershell
-dsh plugin --profile desktop add <本 tgz 完整路径>
+dsh plugin --profile desktop add dsh-qq-access
 ```
 
-装完重启 DSH，左侧栏出现「QQ 接入」。首次使用先初始化配置：
+**方式二：下载 tgz**（连不上 npm 时用）
+
+1. 打开 [Releases](https://github.com/Applepinea/dsh-qq-access/releases/latest)，下载 `dsh-qq-access.tgz`。
+   同一个 Release 里还有个带版本号的 `dsh-qq-access-1.0.0.tgz`，两个文件内容完全一致，下哪个都行。
+
+2. 用下载后的完整路径安装（PowerShell 里路径带空格要加引号）：
+
+```powershell
+dsh plugin --profile desktop add "$env:USERPROFILE\Downloads\dsh-qq-access.tgz"
+```
+
+装完重启 DSH，左侧栏出现「QQ 接入」。
+
+### 首次配置
+
+配置默认在 `%USERPROFILE%\.dsh-qq-access\config.json`，两种生成方式任选一种。
+
+**跑向导**：在插件目录下执行（不确定装到哪了就用下面那种）：
 
 ```powershell
 node cli.mjs setup
 ```
 
+**手写配置**：把 `examples/config.example.json` 复制到
+`%USERPROFILE%\.dsh-qq-access\config.json`，至少改这三项：
+
+- `selfId`：登录的 QQ 号
+- `onebot.token`：16 位以上随机字符串
+- `events.secret`：16 位以上随机字符串
+
+托管模式下这两个值会自动写进 NapCat 的 OneBot 配置，不用另外填一遍。
+改完重启，剩下的项都能在面板里调，不用再碰文件。
+
 ### 其他命令
+
+以下命令都在插件目录下执行。
 
 | 命令 | 用途 |
 | --- | --- |
@@ -145,11 +176,12 @@ node cli.mjs setup
 
 ```bash
 npm install
-npm run doctor          # 只读自检
+npm run check     # 清单字段、文件完整性、客户端 bundle、全量语法
+npm test          # 11 个用例（其中 1 个需要宿主 @deepseek-ai/dsh-llm，没装则跳过）
+node cli.mjs doctor   # 只读自检，需要本机有 NapCat
 ```
 
-CI 会跑三件事：所有文件的 `node --check`、一次真实模块加载、
-以及工具清单与白名单的一致性检查（这个项目出过好几次清单漂移）。
+仓库目前没有配 CI，上面几条请在提交前手动跑一遍。
 
 ## 更多文档
 
