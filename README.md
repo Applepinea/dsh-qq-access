@@ -27,7 +27,7 @@ Windows x64 内置 NapCat 的安装、配置与进程管理：首次自动下载
 
 ## 安装
 
-**方式一：从 npm 装**（推荐，升级时重跑一次即可）**npm我还没更新到最新版，先用方式二**
+**方式一：从 npm 装**（推荐，升级时重跑一次即可）**（由于我忘了npm密码账号被冻结了72小时QAQ，npm我还没更新到最新版，先用方式二）**
 
 ```powershell
 dsh plugin --profile desktop add dsh-qq-access
