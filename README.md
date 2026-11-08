@@ -36,7 +36,7 @@ dsh plugin --profile desktop add dsh-qq-access
 **方式二：下载 tgz**（连不上 npm 时用）
 
 1. 打开 [Releases](https://github.com/Applepinea/dsh-qq-access/releases/latest)，下载 `dsh-qq-access.tgz`。
-   同一个 Release 里还有个带版本号的 `dsh-qq-access-1.0.1.tgz`，两个文件内容完全一致，下哪个都行。
+   同一个 Release 里还有个带版本号的 `dsh-qq-access-1.1.0.tgz`，两个文件内容完全一致，下哪个都行。
 
 2. 用下载后的完整路径安装（PowerShell 里路径带空格要加引号）：
 

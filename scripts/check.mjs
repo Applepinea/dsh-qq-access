@@ -96,7 +96,24 @@ section('工具清单一致性');
   const missingInGuide = real.filter((n) => !guided.includes(n));
   must(missingInGuide.length === 0, `能力指南覆盖全部工具${missingInGuide.length ? `（缺 ${missingInGuide.join(', ')}）` : ''}`);
 }
+section('面板可改项与热更新一致');
+// PATCHABLE 决定「面板能改什么」，热更新代码决定「改完运行中的实例读不读得到」。
+// 这两份清单是手写的，已经漏过：life 写进了 PATCHABLE，但热更新里没有对应行，
+// 表现是面板保存成功、开关也写进了 config.json，却要重启才生效。
+{
+  const uiSrc = readFileSync(join(root, 'lib/ui.mjs'), 'utf8');
+  const block = uiSrc.slice(uiSrc.indexOf('const PATCHABLE'), uiSrc.indexOf('function pick('));
+  must(block.length > 0, 'PATCHABLE 定义存在');
 
+  const sections = [...block.matchAll(/^\s{2}(\w+):\s*\[/gm)].map((m) => m[1]).filter((k) => k !== 'root');
+  must(sections.length > 0, `PATCHABLE 里有 ${sections.length} 个可改段`);
+
+  // 两种写法都算热更新：整段替换 runtime.config.life = ...，或逐字段 runtime.config.napcat.xxx = ...。
+  // napcat 是有意逐字段写的（只有三个字段会被后续读取），不能因为写法不同就判失败。
+  const missing = sections.filter((s) => !uiSrc.includes(`runtime.config.${s} =`)
+    && !uiSrc.includes(`runtime.config.${s}.`));
+  must(missing.length === 0, `每个可改段都有热更新${missing.length ? `（缺 ${missing.join(', ')}）` : ''}`);
+}
 section('语法');
 const files = [];
 (function walk(dir) {

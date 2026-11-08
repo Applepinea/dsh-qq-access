@@ -99,7 +99,19 @@
     "proactiveGroup": false,
     "proactiveMaxPerDay": 3,
     "proactiveMinGapMinutes": 90,
+    "proactiveJitterMinutes": 45,
+    "proactiveGraceMinutes": 30,
+    "proactiveHint": "",
     "proactiveTargets": []
+  },
+  "weather": {
+    "enabled": false,
+    "apiHost": "",
+    "apiKey": "",
+    "latitude": 38.90,
+    "longitude": -77.04,
+    "city": "华盛顿",
+    "timeoutMs": 8000
   },
   "memes": {
     "enabled": true,
