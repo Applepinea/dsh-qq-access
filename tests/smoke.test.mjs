@@ -410,7 +410,7 @@ test('不像 API Key 的内容不会被当成 key 存下来', async () => {
   assert.equal(make('中文密钥'), '', '中文要拒绝');
 
   // 正常的 key 要放行。
-  assert.equal(make('a3c0eaa65b614bf68ec1979ba9a6ae5e'), 'a3c0eaa65b614bf68ec1979ba9a6ae5e');
+  assert.equal(make('0123456789abcdef0123456789abcdef'), '0123456789abcdef0123456789abcdef');
   assert.equal(make('ABCD-1234_xy.z'), 'ABCD-1234_xy.z');
   // 空值就是没填。
   assert.equal(make(''), '');
