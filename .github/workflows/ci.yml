@@ -24,8 +24,11 @@ jobs:
       - name: Install
         run: npm install --no-audit --no-fund
 
+      # 清单字段、文件完整性、语法、客户端 bundle 约定、工具清单一致性。
+      # 逻辑都在 scripts/check.mjs 里，不在这里重复一份 —— 两处各写一遍迟早会不一致。
       - name: Check
         run: npm run check
 
+      # 冒烟测试：不需要 DSH 宿主，没有宿主时相关项自动跳过。
       - name: Test
         run: npm test
