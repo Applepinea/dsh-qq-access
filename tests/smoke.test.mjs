@@ -147,10 +147,25 @@ test('主动消息的配额跨重启有效', async () => {
 
 test('主动消息用本地日期记配额，不用 UTC', async () => {
   const { isoDate } = await import('../lib/virtual-life.mjs');
-  // 本地凌晨 3 点：UTC 还是前一天。两者必须能区分开，否则配额会算错日子。
-  const local3am = new Date(2026, 10, 8, 3, 30);
-  assert.equal(isoDate(local3am), '2026-11-08', 'isoDate 必须按本地时区');
-  assert.notEqual(isoDate(local3am), local3am.toISOString().slice(0, 10));
+
+  // 只验证「isoDate 跟着本地日历走」这件事本身。
+  //
+  // 原来这里还断言 isoDate(...) !== toISOString().slice(0,10)，
+  // 想用「两者不同」来证明用的是本地时间。但那个不等只在 UTC+8 才成立 ——
+  // 在 UTC 时区的 CI 上两者相同，测试就挂了。
+  //
+  // 换个与机器时区无关的写法：用本地时间构造一个日期，
+  // 断言 isoDate 返回的年月日和构造参数一致。
+  for (const [y, m, d] of [[2026, 11, 8], [2026, 1, 1], [2025, 12, 31]]) {
+    const local = new Date(y, m - 1, d, 3, 30);
+    assert.equal(isoDate(local), `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`,
+      'isoDate 必须返回本地日历日期');
+  }
+
+  // 反过来确认它没走 UTC：本地日期的午夜和 23:59 必须是同一天。
+  const start = new Date(2026, 10, 8, 0, 0);
+  const end = new Date(2026, 10, 8, 23, 59);
+  assert.equal(isoDate(start), isoDate(end), '同一天的任何时刻都该算出同一个日期');
 });
 test('主动消息按「次」算配额，不按段数', async () => {
   const { VirtualLife } = await import('../lib/virtual-life.mjs');
