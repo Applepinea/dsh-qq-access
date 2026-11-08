@@ -1,8 +1,38 @@
+# 依赖
 node_modules/
-package-lock.json.bak
+.pnpm-store/
+
+# 构建产物
 *.tgz
-*.log
+dist/
+build/
+
+# 本地配置与运行时数据
+# 含 QQ 号、cookie、token，绝不入库。
+# data/ 下面还有 memory（长期记忆）、emotion（好感度）、
+# qzone-proactive（发动态调度）、virtual-life（日程）等，都在这个目录里。
+config.json
+*.local.json
 data/
+*.log
 debug.log
+
+# 包管理器与工具缓存
+.npm/
+.cache/
+.eslintcache
+
+# 编辑器与系统
+.vscode/
+.idea/
+*.code-workspace
 .DS_Store
 Thumbs.db
+desktop.ini
+*.swp
+*~
+
+# 备份与临时文件
+*.bak
+*.tmp
+*.orig
