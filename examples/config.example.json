@@ -2,17 +2,17 @@
   "selfId": "123456789",
   "ownerIds": [],
   "dataDir": "./data",
-
   "onebot": {
     "apiUrl": "http://127.0.0.1:3000",
     "token": "REPLACE_WITH_RANDOM_API_TOKEN_32_CHARS",
     "timeoutMs": 15000
   },
   "events": {
+    "host": "127.0.0.1",
     "port": 5701,
-    "secret": "REPLACE_WITH_RANDOM_EVENT_SECRET_32_CHARS"
+    "secret": "REPLACE_WITH_RANDOM_EVENT_SECRET_32_CHARS",
+    "maxBytes": 1048576
   },
-
   "napcat": {
     "mode": "managed",
     "autoInstall": true,
@@ -20,9 +20,9 @@
     "webuiPort": 6099,
     "webuiToken": "REPLACE_WITH_RANDOM_WEBUI_TOKEN_32_CHARS",
     "loginTimeoutMs": 600000,
-    "maxRestarts": 2
+    "maxRestarts": 2,
+    "directory": "./data/napcat"
   },
-
   "access": {
     "privateMode": "all",
     "groupMode": "all",
@@ -31,7 +31,6 @@
     "blockedUsers": [],
     "blockedGroups": []
   },
-
   "reply": {
     "private": true,
     "group": "smart",
@@ -50,9 +49,10 @@
     "maxQueuePerConversation": 20,
     "maxQueuedTotal": 100,
     "timeoutMs": 180000,
-    "idleMs": 1800000
+    "idleMs": 1800000,
+    "vision": true,
+    "linkTimeoutMs": 20000
   },
-
   "rate": {
     "segmentMinMs": 1000,
     "segmentMaxMs": 10000,
@@ -61,19 +61,15 @@
     "peerGapMs": 3000,
     "maxPerMinute": 20
   },
-
   "poll": {
     "enabled": true,
     "intervalMs": 60000,
     "count": 10
   },
-
   "retentionDays": 30,
   "ownerHarnessTools": false,
   "model": {},
-
   "persona": "你是一名友好自然的 QQ 助手。用中文简洁聊天，不发送思考过程、工具日志或其他人的私聊内容。",
-
   "emotion": {
     "enabled": false,
     "perSession": false,
@@ -85,7 +81,16 @@
     "significanceThreshold": 5,
     "maxProfiles": 50
   },
-
+  "memory": {
+    "enabled": false,
+    "halfLifeDays": 30,
+    "recallLimit": 4,
+    "factLimit": 6,
+    "minScore": 0.12,
+    "dailyQuota": 12,
+    "useModel": false,
+    "inject": true
+  },
   "life": {
     "enabled": true,
     "inject": true,
@@ -96,7 +101,6 @@
     "proactiveMinGapMinutes": 90,
     "proactiveTargets": []
   },
-
   "memes": {
     "enabled": true,
     "maxEntries": 5000,
@@ -107,19 +111,16 @@
     "autoSend": false,
     "autoSendChance": 0.15
   },
-
   "search": {
     "enabled": true,
     "apiKey": "",
     "timeoutMs": 30000
   },
-
   "qzone": {
     "enabled": true,
     "timeoutMs": 30000,
     "cookieTtlMs": 600000
   },
-
   "qzoneProactive": {
     "enabled": false,
     "maxPerDay": 1,

@@ -11,14 +11,27 @@ npm install
 
 ## 本地检查
 
+提交前先跑这两条：
+
 ```bash
-npm run check                     # 语法 + 清单字段 + 客户端 bundle
-npm test                          # tests/smoke.test.mjs
-node -e "import('./index.mjs')"   # 真实加载，能抓到 --check 查不出的「引用了不存在的符号」
-node cli.mjs doctor               # 只读自检，需要本机有 NapCat
+npm run check     # 清单字段、文件完整性、语法、客户端 bundle 约定、工具清单一致性
+npm test          # 冒烟测试，不需要 DSH 宿主
 ```
 
-仓库目前没有配 CI，提交前请把这四条手动跑一遍。
+下面三步是手工兜底，覆盖冒烟测试测不到的部分：
+
+```bash
+# 1. 语法
+for f in index.mjs cli.mjs lib/*.mjs lib/*.js; do node --check "$f"; done
+
+# 2. 真实加载（能抓到「引用了不存在的符号」这类 --check 查不出的问题）
+node -e "import('./index.mjs')"
+
+# 3. 只读自检（需要本机有 NapCat）
+node cli.mjs doctor
+```
+
+仓库目前还没配 CI，上面两条请在提交前手动跑一遍。
 
 ## 提交前请确认
 

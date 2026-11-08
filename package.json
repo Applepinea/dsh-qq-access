@@ -1,7 +1,7 @@
 {
   "name": "dsh-qq-access",
-  "version": "1.0.0",
-  "description": "DeepSeek Harness 的 QQ 接入插件：NapCat 托管、消息归档、QQ 空间、表情包、虚拟人生、情感关系与群聊智能回复。",
+  "version": "1.0.1",
+  "description": "DeepSeek Harness 的 QQ 接入插件：NapCat 托管、消息归档、QQ 空间、表情包、虚拟人生、情感关系、长期记忆与群聊智能回复。",
   "type": "module",
   "main": "./index.mjs",
   "exports": {
@@ -10,7 +10,7 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "dsh-qq-access": "./cli.mjs"
+    "dsh-qq-access": "cli.mjs"
   },
   "engines": {
     "node": ">=22.14.0",
@@ -39,8 +39,8 @@
     "LICENSE",
     "docs/",
     "CHANGELOG.md",
-    "CHANGES-LOCAL.md",
-    "CONTRIBUTING.md"
+    "CONTRIBUTING.md",
+    "CHANGES-LOCAL.md"
   ],
   "dsh": {
     "bundle": {

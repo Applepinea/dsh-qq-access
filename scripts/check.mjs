@@ -71,6 +71,32 @@ if (typeof clientFile === 'string' && existsSync(join(root, clientFile))) {
   bad('exports["./client"] 指向的文件不存在');
 }
 
+section('工具清单一致性');
+// 这个项目出过五次「新增工具但忘了同步白名单」的事故，表现是工具注册了、
+// 模型却永远看不到它（tools.restrict 会按白名单过滤）。能力指南漏写也是同一类
+// 问题：模型不知道该在什么时候用它。三份清单必须彼此一致。
+{
+  const toolsSrc = readFileSync(join(root, 'lib/tools.mjs'), 'utf8');
+  const accessSrc = readFileSync(join(root, 'lib/access.mjs'), 'utf8');
+  const capSrc = readFileSync(join(root, 'lib/capabilities.mjs'), 'utf8');
+
+  const real = [...toolsSrc.matchAll(/^\s+tool\('([a-z_]+)'/gm)].map((m) => m[1]);
+  must(real.length > 0, `tools.mjs 里找到 ${real.length} 个工具`);
+
+  const allowBlock = accessSrc.slice(accessSrc.indexOf('pluginToolNames'));
+  const allowed = [...allowBlock.slice(0, allowBlock.indexOf(']')).matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+  const missingInAllow = real.filter((n) => !allowed.includes(n));
+  const staleInAllow = allowed.filter((n) => !real.includes(n));
+  must(missingInAllow.length === 0, `白名单覆盖全部工具${missingInAllow.length ? `（缺 ${missingInAllow.join(', ')}）` : ''}`);
+  must(staleInAllow.length === 0, `白名单没有多余项${staleInAllow.length ? `（多 ${staleInAllow.join(', ')}）` : ''}`);
+
+  // 能力指南里的 tools 数组也要覆盖到。
+  const guided = [...capSrc.matchAll(/tools:\s*\[([^\]]*)\]/g)]
+    .flatMap((m) => [...m[1].matchAll(/'([a-z_]+)'/g)].map((x) => x[1]));
+  const missingInGuide = real.filter((n) => !guided.includes(n));
+  must(missingInGuide.length === 0, `能力指南覆盖全部工具${missingInGuide.length ? `（缺 ${missingInGuide.join(', ')}）` : ''}`);
+}
+
 section('语法');
 const files = [];
 (function walk(dir) {
