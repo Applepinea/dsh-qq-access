@@ -1,204 +1,443 @@
-# dsh-qq-access
+# DSH QQ Access
 
-把个人 QQ 接进 DeepSeek Harness。能收发私聊群聊、看图和发表情、读写 QQ 空间，
-还给她加了一点自己的生活：今天在做什么、穿什么、吃了什么，对谁好感多少，记得谁说过什么。
+<p align="center">
+  <strong>让 DeepSeek Harness 接入你的 QQ，拥有真实的聊天、记忆与生活</strong>
+</p>
 
-Windows x64 上连 NapCat 都不用自己装。第一次启动会自动下载官方运行包，
-之后跟着 Harness 一起起，扫一次码就一直能用。
+<p align="center">
+  一个面向 DeepSeek Harness 的 QQ 接入插件，基于 NapCat / OneBot v11，提供私聊、群聊、QQ 空间、长期记忆、情感关系与虚拟生活等能力。
+</p>
+
+<p align="center">
+  <a href="https://github.com/Applepinea/dsh-qq-access/releases"><img src="https://img.shields.io/github/v/release/Applepinea/dsh-qq-access?style=flat-square&color=blue" alt="GitHub Release"></a>
+  <a href="https://www.npmjs.com/package/dsh-qq-access"><img src="https://img.shields.io/npm/v/dsh-qq-access?style=flat-square&color=cb3837" alt="npm version"></a>
+  <a href="https://github.com/Applepinea/dsh-qq-access/actions"><img src="https://img.shields.io/github/actions/workflow/status/Applepinea/dsh-qq-access/ci.yml?style=flat-square&label=CI" alt="CI"></a>
+  <a href="https://github.com/Applepinea/dsh-qq-access/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Applepinea/dsh-qq-access?style=flat-square" alt="License"></a>
+  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-%3E%3D22.14-green?style=flat-square&logo=node.js" alt="Node.js"></a>
+</p>
+
+<p align="center">
+  <a href="#功能特性">功能特性</a> ·
+  <a href="#快速开始">快速开始</a> ·
+  <a href="#配置指南">配置指南</a> ·
+  <a href="#安全机制">安全机制</a> ·
+  <a href="#开发与测试">开发与测试</a> ·
+  <a href="#文档">文档</a>
+</p>
 
 ---
 
-## 功能
+## ✨ 项目简介
 
-| 能干什么 | 说明 |
+**DSH QQ Access** 是一个为 [DeepSeek Harness](https://github.com/deepseek-ai/DeepSeek-Harness) 设计的 QQ 接入插件。
+
+它通过 NapCat 提供的 OneBot v11 接口，将 QQ 的消息、群聊、QQ 空间等能力接入 Harness，让 AI 不再局限于单纯的对话窗口。
+
+它不仅可以收发消息、查看图片、搜索表情包，还拥有独立的情感状态、长期记忆和虚拟生活系统。
+
+在 Windows x64 环境下，插件还可以自动下载并管理 NapCat，无需单独配置一套 NapCat 运行环境。
+
+**核心设计理念：让 AI 不只是能够回复消息，还能拥有持续的上下文、关系和生活状态。**
+
+## 🚀 功能特性
+
+### 💬 QQ 消息与群聊
+
+| 功能 | 说明 |
 | --- | --- |
-| 接入 | NapCat 自己装自己起，断线会重连；也能连你已经有的实例 |
-| 聊天 | 私聊群聊分开配；长回复按逗号换行拆成几条发，间隔随字数变 |
-| 群里插话 | 被 @、被引用、被叫名字一定回；其他看内容她感不感兴趣 |
-| 看图 | 收到的图她真的能看到；也能发图、发小黄脸、发表情包 |
-| 链接 | B 站、YouTube、推特、小红书、Instagram、小黑盒，发之前先读一遍再聊 |
-| QQ 空间 | 读说说、发说说、评论、删除；还能按时间窗自己发动态 |
-| 表情包 | 有个本地图库，按情绪搜，自动收集，模型自己打标签 |
-| 虚拟人生 | 一周的日程 + 一堆穿搭 + 三餐，生成一次用一周 |
-| 好感度 | 8 维情绪 + 好感 + 亲密，四个阶段，说话语气跟着变 |
-| 联网 | 实时搜索、抓网页正文、一次搜好几路 |
-| 记得多久前 | 每条历史都标了「几分钟前 / 昨天 / 上周」，隔太久会提醒她 |
-| 长期记忆 | 按人记，同一个人在群里和私聊共用一份；会淡忘但不会删 |
+| 私聊与群聊 | 支持独立配置私聊、群聊访问权限 |
+| 智能群聊回复 | 支持 `off`、`mention`、`smart`、`all` 四种模式 |
+| 智能触发 | 被 @、被引用、被叫名字时优先响应 |
+| 兴趣识别 | 根据话题兴趣和对话内容判断是否参与群聊 |
+| 消息分段 | 长消息自动拆分，发送间隔根据文本长度调整 |
+| 消息归档 | 按日期保存消息，支持关键词搜索和历史读取 |
+| 图片理解 | 接收图片并将其交给模型理解 |
+| 表情互动 | 支持 QQ 小黄脸、图片和表情包收发 |
 
-## 安装
+### 🧠 长期记忆与情感系统
 
-**方式一：从 npm 装**（推荐，升级时重跑一次即可）**（由于我忘了 npm 密码账号被冻结了 72 小时 QAQ，npm 我还没更新到最新版，先用方式二）**
+| 功能 | 说明 |
+| --- | --- |
+| 长期记忆 | 按用户建立独立记忆，同一用户在群聊和私聊中共享 |
+| 记忆衰减 | 根据时间降低普通事件的记忆权重 |
+| 事实记忆 | 重要事实可以长期保留，更新时标记旧事实 |
+| 情感系统 | 喜悦、信任、恐惧、惊讶、悲伤、厌恶、愤怒、期待八维情感 |
+| 好感度 | 独立记录对不同用户的好感变化 |
+| 亲密度 | 根据互动逐步发展关系 |
+| 关系阶段 | 支持初识、深化、承诺、共生等阶段演进 |
+| 时间感知 | 为历史消息附加相对时间和对话间隔 |
 
-```powershell
-dsh plugin --profile desktop add dsh-qq-access
-```
+### 🌱 虚拟生活系统
 
-**方式二：下载 tgz**（连不上 npm 时用）
+让 AI 拥有持续变化的生活状态，而不是每次聊天都从零开始。
 
-1. 打开 [Releases](https://github.com/Applepinea/dsh-qq-access/releases/latest)，下载 `dsh-qq-access.tgz`。
+- **日程安排**：生成并维护一周的生活计划。
+- **穿搭系统**：根据天气和时间安排不同穿搭。
+- **饮食记录**：生成每日三餐安排。
+- **主动动态**：按照设定的时间窗口和概率发布 QQ 空间动态。
+- **生活状态**：将生活信息融入日常对话。
+
+### 🌐 QQ 空间与联网能力
+
+- 读取 QQ 空间说说、图片和评论。
+- 发布说说、评论和删除动态。
+- 使用已有 QQ 登录状态获取空间 Cookie。
+- 支持 Bilibili、YouTube、X、Instagram、小红书、小黑盒等平台的链接内容读取。
+- 支持实时搜索、网页正文抓取和多路搜索。
+
+### 🎨 表情包管理
+
+- 本地表情包图库。
+- 根据情绪和关键词检索表情包。
+- 自动收集对话中的表情包。
+- 使用视觉模型为表情包自动分类。
+- 支持自动发送配置。
+
+### 🖥️ NapCat 自动管理
+
+Windows x64 用户可以使用插件内置的 NapCat 托管功能：
+
+1. 自动下载官方 NapCat 运行包。
+2. 校验下载文件 SHA256。
+3. 自动解压和生成运行配置。
+4. 自动启动 NapCat。
+5. 自动打开扫码登录页面。
+6. 监控连接状态并处理断线重连。
+
+如果你已经部署了 NapCat，也可以切换到外部模式，直接连接已有实例。
+
+---
+
+## 📦 快速开始
+
+### 环境要求
+
+| 项目 | 要求 |
+| --- | --- |
+| DeepSeek Harness | `>= 0.2.1-rc.3` |
+| Node.js | `>= 22.14.0` |
+| 操作系统 | Windows / Linux / macOS |
+| NapCat | 托管模式仅支持 Windows x64；其他环境使用外部模式 |
+
+### 方式一：通过 GitHub Release 安装（推荐）
+
+1. 前往 [GitHub Releases](https://github.com/Applepinea/dsh-qq-access/releases/latest)。
+2. 下载 `dsh-qq-access.tgz`。
    同一个 Release 里还有个带版本号的 `dsh-qq-access-1.1.0.tgz`，两个文件内容完全一致，下哪个都行。
-
-2. 用下载后的完整路径安装（PowerShell 里路径带空格要加引号）：
+3. 用下载后的完整路径安装（PowerShell 里路径带空格要加引号）：
 
 ```powershell
 dsh plugin --profile desktop add "$env:USERPROFILE\Downloads\dsh-qq-access.tgz"
 ```
 
-装完重启 DSH，左侧栏出现「QQ 接入」。
+安装完成后重启 Harness，左侧栏即可看到 **QQ 接入**。
 
-`--profile` 要和实际启动的环境一致：桌面端用 `desktop`，网页端用 `web`。
+> 注意：`--profile` 必须与实际运行的 Harness 环境一致。桌面端用 `desktop`，网页端用 `web`。
+
+### 方式二：通过 npm 安装
+
+```powershell
+dsh plugin --profile desktop add dsh-qq-access
+```
+
+> ⚠️ npm 上还是 0.5.0，比 GitHub 落后几个版本。账号解冻后会同步，在那之前请用方式一。
 
 ### 首次配置
 
-配置默认在 `%USERPROFILE%\.dsh-qq-access\config.json`，两种生成方式任选一种。
+插件默认配置文件位置：
 
-**跑向导**：在插件目录下执行（不确定装到哪了就用下面那种）：
+```text
+%USERPROFILE%\.dsh-qq-access\config.json
+```
+
+你可以通过配置向导自动生成配置：
 
 ```powershell
 node cli.mjs setup
 ```
 
-**手写配置**：把 `examples/config.example.json` 复制到
-`%USERPROFILE%\.dsh-qq-access\config.json`，至少改这三项：
+向导会引导你输入 QQ 账号，并生成随机 Token 和事件签名密钥。
 
-- `selfId`：登录的 QQ 号
-- `onebot.token`：16 位以上随机字符串
-- `events.secret`：16 位以上随机字符串
+在 Windows x64 上，向导默认使用 NapCat 托管模式，并自动准备 NapCat 运行环境。
 
-托管模式下这两个值会自动写进 NapCat 的 OneBot 配置，不用另外填一遍。
-改完重启，剩下的项都能在面板里调，不用再碰文件。
+配置完成后，启动 Harness，按照提示完成 QQ 扫码登录即可。
 
-### 还有几个命令
+### 手动配置
 
-以下命令都在插件目录下执行。
+如果需要手动配置，可以复制示例文件：
 
-| 命令 | 用途 |
-| --- | --- |
-| `node cli.mjs setup` | 生成配置文件 |
-| `node cli.mjs doctor` | 只读检查：连接、NapCat、QQ 空间 cookie |
-| `node cli.mjs napcat-install` | 预下载 NapCat 运行包 |
-| `node cli.mjs napcat-enable` | 切换为托管模式 |
-| `node cli.mjs napcat-login` | 重新打开扫码页 |
+```powershell
+Copy-Item examples/config.example.json "$env:USERPROFILE\.dsh-qq-access\config.json"
+```
 
-## 配置
-
-配置文件在 `~/.dsh-qq-access/config.json`。下面这些大部分能在面板里直接改，改完就生效，不用重启。
-
-| 键 | 说明 |
-| --- | --- |
-| `selfId` | 登录的 QQ 号 |
-| `ownerIds` | 管理员 QQ 号，只有这些人能用跨会话工具 |
-| `access.privateMode` / `groupMode` | `all` / `allowlist` / `disabled` |
-| `reply.private` | 私聊是否自动回复 |
-| `reply.group` | `off` / `mention` / `smart` / `all` |
-| `reply.smartThreshold` | smart 模式的阈值（1–10，越高越安静） |
-| `reply.selfNames` | 她在群里的别名，被叫到就回 |
-| `reply.interests` | 感兴趣的话题词 |
-| `memory` | 长期记忆：`enabled`、`halfLifeDays`（半衰期）、`recallLimit`、`factLimit`、`minScore`、`dailyQuota`、`useModel`、`inject` |
-| `retentionDays` | 归档保留天数；`0` 表示永久保存 |
-| `emotion` | 情感与关系：开关、隐私级别、分析模型 |
-| `qzoneProactive` | 主动发动态：每天条数、发送概率、时间窗、时段语气 |
-| `model` | 指定 provider / model；留空跟随 Harness 默认 |
-
-### 人格和能力是分开的两层
-
-系统提示分成两个独立 section，面板只能改前一层：
-
-| 层 | 内容 | 来源 |
-| --- | --- | --- |
-| `qq-access-persona` | 她是谁、怎么说话、输出格式 | 面板「人格设定」，可编辑 |
-| `qq-access-capabilities` | 38 个工具各自「什么时候该用」 | 插件内置 `lib/capabilities.mjs` |
-
-这么分是因为：能力清单要是塞进人格里，你在面板改一次人格就把它冲掉了，
-人格一长还容易把它挤出模型的注意力。另外能力层会看这个会话实际能调哪些工具，
-群聊里只有 3 个可用，就只列那 3 个。
-
-## 群里什么时候回
-
-`smart` 模式（默认）分两类：
-
-**无条件回复**：被 @、引用了她的消息、正文出现她的名字或 QQ 号。
-
-**打分**（够阈值才回）：
-
-| 信号 | 分值 |
-| --- | --- |
-| 像在对人说话（「你在干嘛」） | 3 |
-| 向群里提问（「有没有人知道」） | 3 |
-| 单独的 `？` 结尾 | 2 |
-| 命中一个兴趣词 | 3（每多一个 +1） |
-| 命中学习到的话题 | 2 + 命中次数 |
-| 内容超过 30 字 | 1 |
-
-默认阈值 3。这些规则只会让「该回」的理由变多，不会变少；没信号就不吭声。
-
-## 好感度怎么涨怎么掉
-
-8 维情感（喜悦 / 信任 / 恐惧 / 惊讶 / 悲伤 / 厌恶 / 愤怒 / 期待）
-加好感度（-100~100）与亲密度（0~100）双核，四个阶段：
-
-| 阶段 | 进入门槛 | 特征 |
-| --- | --- | --- |
-| 初识期 | — | 好感驱动 |
-| 深化期 | 复合分 ≥ 55 | 互动平衡 |
-| 承诺期 | 复合分 ≥ 80 | 亲密主导 |
-| 共生期 | 复合分 ≥ 95 | 完全融合 |
-
-好感掉到负数会换一套算法：冷淡期 / 反感期 / 敌对期，这时候亲密度不算数了。
-阶段之间有 5 分滞后带，刚升上去不会因为掉一两分就退回来。
-
-每轮能变多少是代码写死的（好感 ±5、情感 ±3），模型自己说了不算，不然一晚上就能刷满。
-
-## 她知道自己上次聊天是多久前
-
-每条历史消息都带：
+至少需要确认以下字段：
 
 ```json
-{ "time": "2026-11-06 20:30", "ago": "昨天晚上", "since_previous": "20 小时" }
+{
+  "selfId": "你的QQ号",
+  "onebot": {
+    "apiUrl": "http://127.0.0.1:3000",
+    "token": "替换为随机生成的安全Token"
+  },
+  "events": {
+    "port": 5701,
+    "secret": "替换为随机生成的签名密钥"
+  }
+}
 ```
 
-上一轮超过 2 小时，还会单独提示一句「这是很久以前的事了」。
-之前没这些字段的时候，她会把一周前说的话当成刚刚说的。
+`onebot.token` 和 `events.secret` 均应使用不少于 16 位的随机字符串。
 
-## 谁能干什么
+托管模式下，插件会自动将相关连接配置写入 NapCat，无需重复手动配置。
 
-- API、事件接收和登录页都只绑 `127.0.0.1`，外面连不进来。
-- 普通 QQ 好友只能读自己这个会话的历史，跨会话、动文件、跑命令都不行。
-- 管理员身份只看传输层认出来的私聊账号，群里一律当普通成员。
-- 发消息、发说说、评论都有幂等账本，同一个 `request_id` 重试不会发两遍。
-- 返回 `uncertain` 就是「不确定发没发出去」，不会当成成功，也不会自己重发。
+---
 
-## 出问题了先看这里
+## ⚙️ 配置指南
 
-`node cli.mjs doctor` 只看不发，跑它不会给谁发消息。还没扫码的时候 API 连不上是正常的。
+大部分配置都可以直接在 Harness 左侧栏的 **QQ 接入** 面板中修改。
 
-日志在 `data/napcat/logs/console.log`。里面有二维码和登录密钥，别往外发。
+主要配置项如下：
 
-## 开发
+| 配置项 | 作用 |
+| --- | --- |
+| `selfId` | 登录 QQ 账号 |
+| `ownerIds` | 管理员 QQ 账号 |
+| `access.privateMode` | 私聊访问策略 |
+| `access.groupMode` | 群聊访问策略 |
+| `reply.private` | 是否自动回复私聊 |
+| `reply.group` | 群聊回复模式 |
+| `reply.smartThreshold` | 智能群聊触发阈值 |
+| `reply.selfNames` | AI 在群聊中的名称 |
+| `reply.interests` | 感兴趣的话题 |
+| `memory` | 长期记忆设置 |
+| `emotion` | 情感与关系设置 |
+| `life` | 虚拟生活设置 |
+| `qzoneProactive` | QQ 空间主动动态设置 |
+| `model` | 指定使用的模型 |
+
+### 群聊回复模式
+
+| 模式 | 行为 |
+| --- | --- |
+| `off` | 不自动回复 |
+| `mention` | 仅响应 @ 和相关主动提及 |
+| `smart` | 根据消息内容和兴趣判断是否回复 |
+| `all` | 尽可能响应群聊消息 |
+
+`smart` 是默认模式。
+
+它会优先响应被 @、被引用或被叫名字的消息；其他消息则根据对话意图、兴趣词和内容特征进行评分。
+
+默认触发阈值为 3，阈值越高，回复越克制。
+
+### 人格与能力分离
+
+插件将系统提示拆分为两个独立部分：
+
+| Section | 内容 | 是否可编辑 |
+| --- | --- | --- |
+| `qq-access-persona` | 人格设定、说话风格和输出格式 | 是 |
+| `qq-access-capabilities` | 插件工具及其使用说明 | 否 |
+
+人格可以通过面板自由调整，而能力说明由插件维护。
+
+此外，能力清单会根据当前会话实际可用的工具动态过滤，避免模型调用不存在的工具。
+
+---
+
+## 🔌 NapCat 连接模式
+
+插件支持两种连接方式：
+
+### Managed Mode（托管模式）
+
+由插件负责 NapCat 的安装、启动、登录页面和运行状态管理。
+
+适合：
+
+- Windows x64 用户。
+- 没有单独部署 NapCat 的用户。
+- 希望尽可能减少手动配置的用户。
+
+### External Mode（外部模式）
+
+连接已经运行的 NapCat 或其他 OneBot v11 实现。
+
+适合：
+
+- 已经部署 NapCat 的用户。
+- 使用 Docker 或远程机器运行 NapCat 的用户。
+- 希望自行管理 NapCat 进程的用户。
+
+外部模式需要自行配置 OneBot HTTP 服务和 HTTP 上报。
+
+详细配置请参考：
+
+[外部模式配置说明](docs/EXTERNAL_MODE.md)
+
+---
+
+## 🔐 安全机制
+
+QQ 接入意味着插件能够代表你的 QQ 账号执行操作，因此安全性是项目的重要设计目标。
+
+目前实现了以下机制：
+
+- **本机接口限制**：OneBot API 地址强制使用本机回环地址。
+- **独立身份验证**：HTTP API Token 与事件签名密钥分离。
+- **会话隔离**：普通用户只能读取自己的会话历史。
+- **权限控制**：跨会话管理能力仅开放给管理员。
+- **管理员身份校验**：管理员权限只根据可信的私聊账号身份判断，群聊中不会直接继承管理员权限。
+- **幂等保护**：消息发送、空间发布和评论使用请求账本，避免重复执行。
+- **不确定状态保护**：无法确认是否成功的操作不会被当作成功，也不会自动重复发送。
+
+> ⚠️ 请妥善保管配置文件、NapCat 登录状态、Cookie、Token 和日志。不要将这些信息上传到公开仓库或发送给他人。
+
+---
+
+## 🛠️ 常用命令
+
+在插件目录下执行：
+
+| 命令 | 说明 |
+| --- | --- |
+| `node cli.mjs setup` | 生成初始配置 |
+| `node cli.mjs doctor` | 检查配置与连接状态 |
+| `node cli.mjs napcat-install` | 下载并安装 NapCat |
+| `node cli.mjs napcat-enable` | 启用 NapCat 托管模式 |
+| `node cli.mjs napcat-login` | 重新打开扫码登录页面 |
+
+### 故障排查
+
+如果插件无法正常连接 QQ，可以先运行：
+
+```powershell
+node cli.mjs doctor
+```
+
+该命令会检查配置、NapCat 安装情况、QQ 连接和 QQ 空间 Cookie，不会发送消息或发布动态。
+
+日志默认位于：
+
+```text
+%USERPROFILE%\.dsh-qq-access\data\napcat\logs\console.log
+```
+
+不同版本和运行状态下，日志位置可能有所不同。
+
+如果需要提交日志用于排查，请先删除二维码、登录密钥、Cookie、Token 等敏感内容。
+
+---
+
+## 🧪 开发与测试
+
+克隆项目：
 
 ```bash
-npm install
-npm run check         # 清单字段、文件完整性、语法、客户端 bundle 约定、工具清单一致性
-npm test              # 冒烟测试，不需要 DSH 宿主
-node cli.mjs doctor   # 只读自检，需要本机有 NapCat
+git clone https://github.com/Applepinea/dsh-qq-access.git
+cd dsh-qq-access
 ```
 
-`check` 里有一项是比对工具清单和白名单。这个坑我踩过五次，加了工具忘了同步，
-结果工具注册了模型却永远看不到它。
+安装依赖：
 
-仓库目前还没配 CI，上面几条请在提交前手动跑一遍。
+```bash
+npm ci
+```
 
-## 更多文档
+运行检查：
 
-| 文档 | 写了什么 |
+```bash
+npm run check
+```
+
+运行测试：
+
+```bash
+npm test
+```
+
+检查项目打包内容：
+
+```bash
+npm pack --dry-run
+```
+
+### CI
+
+项目配置了 GitHub Actions，自动执行 Node.js 22 / 24 测试矩阵。
+
+[查看 CI 运行状态](https://github.com/Applepinea/dsh-qq-access/actions)
+
+### 测试范围
+
+目前包含：
+
+- JavaScript / ESM 语法检查。
+- 插件文件完整性检查。
+- 客户端 Bundle 依赖声明检查。
+- 工具清单与能力说明一致性检查。
+- 冒烟测试。
+
+部分功能依赖真实 QQ、NapCat 和 Harness 环境，不能仅通过自动化测试完全覆盖。
+
+详细测试记录：
+
+[验证说明](docs/VALIDATION.md)
+
+---
+
+## 📚 文档
+
+| 文档 | 内容 |
 | --- | --- |
-| [CHANGELOG.md](CHANGELOG.md) | 每个版本改了什么 |
-| [CHANGES-LOCAL.md](CHANGES-LOCAL.md) | 开发记录，为什么这么写、踩过哪些坑 |
-| [docs/EXTERNAL_MODE.md](docs/EXTERNAL_MODE.md) | 已经有 NapCat 了怎么接 |
-| [docs/VALIDATION.md](docs/VALIDATION.md) | 哪些测过、哪些没测 |
-| [docs/SOURCES.md](docs/SOURCES.md) | 接口从哪查的、参考了哪些项目 |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | 想改代码的话看这个 |
+| [CHANGELOG.md](CHANGELOG.md) | 版本更新记录 |
+| [docs/EXTERNAL_MODE.md](docs/EXTERNAL_MODE.md) | 外部 NapCat 连接方式 |
+| [docs/VALIDATION.md](docs/VALIDATION.md) | 测试范围与验证记录 |
+| [docs/SOURCES.md](docs/SOURCES.md) | 接口来源与参考项目 |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | 贡献指南 |
 
-## 许可
+---
 
-MIT，见 [LICENSE](LICENSE)。
+## 🗺️ Roadmap
+
+项目仍在持续完善中，未来可能探索：
+
+- [ ] 更完善的群聊行为策略。
+- [ ] 更灵活的主动互动与生活事件系统。
+- [ ] 更精细的长期记忆管理。
+- [ ] 更多消息类型和 QQ 交互能力。
+- [ ] 更完善的自动化测试与运行状态监控。
+
+具体开发进度以仓库 Issues 和 Releases 为准。
+
+---
+
+## 🤝 参与贡献
+
+欢迎提交 Issue、Pull Request 和功能建议。
+
+如果你发现 Bug、希望增加功能，或者有更好的实现思路，欢迎参与项目开发。
+
+提交代码前，请先阅读：
+
+[CONTRIBUTING.md](CONTRIBUTING.md)
+
+---
+
+## 📄 License
+
+本项目采用 [MIT License](LICENSE) 开源。
+
+---
+
+<p align="center">
+  <strong>DSH QQ Access</strong>
+  <br>
+  Give your AI a place to live, remember and connect.
+  <br><br>
+  <a href="https://github.com/Applepinea/dsh-qq-access">GitHub Repository</a>
+  ·
+  <a href="https://github.com/Applepinea/dsh-qq-access/issues">Issues</a>
+  ·
+  <a href="https://github.com/Applepinea/dsh-qq-access/releases">Releases</a>
+</p>
