@@ -123,7 +123,7 @@ Windows x64 用户可以使用插件内置的 NapCat 托管功能：
 
 1. 前往 [GitHub Releases](https://github.com/Applepinea/dsh-qq-access/releases/latest)。
 2. 下载 `dsh-qq-access.tgz`。
-   同一个 Release 里还有个带版本号的 `dsh-qq-access-1.1.0.tgz`，两个文件内容完全一致，下哪个都行。
+   同一个 Release 里还有个带版本号的 `dsh-qq-access-1.1.1.tgz`，两个文件内容完全一致，下哪个都行。
 3. 用下载后的完整路径安装（PowerShell 里路径带空格要加引号）：
 
 ```powershell
