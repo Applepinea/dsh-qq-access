@@ -8,9 +8,9 @@ dist/
 build/
 
 # 本地配置与运行时数据
-# 含 QQ 号、cookie、token，绝不入库。
-# data/ 下面还有 memory（长期记忆）、emotion（好感度）、
-# qzone-proactive（发动态调度）、virtual-life（日程）等，都在这个目录里。
+# config.json 里是 QQ 号、cookie、token，data/ 下面是聊天归档、
+# 记忆、情感、日程等真实数据。这个目录只是发布用的快照，
+# 万一被 git 接管也不能让这些东西进去。
 config.json
 *.local.json
 data/

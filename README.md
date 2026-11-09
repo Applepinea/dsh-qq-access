@@ -16,6 +16,14 @@
   <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-%3E%3D22.14-green?style=flat-square&logo=node.js" alt="Node.js"></a>
 </p>
 
+<p align="center">
+  <a href="#功能特性">功能特性</a> ·
+  <a href="#快速开始">快速开始</a> ·
+  <a href="#配置指南">配置指南</a> ·
+  <a href="#安全机制">安全机制</a> ·
+  <a href="#开发与测试">开发与测试</a> ·
+  <a href="#文档">文档</a>
+</p>
 
 ---
 
