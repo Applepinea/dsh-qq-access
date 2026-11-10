@@ -36,3 +36,6 @@ desktop.ini
 *.bak
 *.tmp
 *.orig
+
+# 升级时自动生成的旧版本快照（含旧配置与旧日志，不进版控）
+.backup-*/

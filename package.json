@@ -1,6 +1,6 @@
 {
   "name": "dsh-qq-access",
-  "version": "1.1.1",
+  "version": "1.1.4",
   "description": "DeepSeek Harness 的 QQ 接入插件：NapCat 托管、消息归档、QQ 空间、表情包、虚拟人生、情感关系、长期记忆与群聊智能回复。",
   "type": "module",
   "main": "./index.mjs",

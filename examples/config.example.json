@@ -98,6 +98,7 @@
     "proactivePrivate": true,
     "proactiveGroup": false,
     "proactiveMaxPerDay": 3,
+    "proactiveSpread": 0.5,
     "proactiveMinGapMinutes": 90,
     "proactiveJitterMinutes": 45,
     "proactiveGraceMinutes": 30,

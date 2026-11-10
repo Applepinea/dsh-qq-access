@@ -119,58 +119,81 @@ Windows x64 用户可以使用插件内置的 NapCat 托管功能：
 | 操作系统 | Windows / Linux / macOS |
 | NapCat | 托管模式仅支持 Windows x64；其他环境使用外部模式 |
 
-### 方式一：通过 GitHub Release 安装（推荐）
-
-1. 前往 [GitHub Releases](https://github.com/Applepinea/dsh-qq-access/releases/latest)。
-2. 下载 `dsh-qq-access.tgz`。
-   同一个 Release 里还有个带版本号的 `dsh-qq-access-1.1.1.tgz`，两个文件内容完全一致，下哪个都行。
-3. 用下载后的完整路径安装（PowerShell 里路径带空格要加引号）：
-
-```powershell
-dsh plugin --profile desktop add "$env:USERPROFILE\Downloads\dsh-qq-access.tgz"
-```
-
-安装完成后重启 Harness，左侧栏即可看到 **QQ 接入**。
-
-> 注意：`--profile` 必须与实际运行的 Harness 环境一致。桌面端用 `desktop`，网页端用 `web`。
-
-### 方式二：通过 npm 安装
+### 方式一：从 npm 安装（推荐）
 
 ```powershell
 dsh plugin --profile desktop add dsh-qq-access
 ```
 
-> ⚠️ npm 上还是 0.5.0，比 GitHub 落后几个版本。账号解冻后会同步，在那之前请用方式一。
+升级时重跑同一条命令即可。网页端把 `desktop` 换成 `web`。
+
+> **提示 `dsh` 不是命令？** 桌面版没有把 `dsh` 加进 PATH，用完整路径调用即可：
+>
+> ```powershell
+> & "$env:LOCALAPPDATA\Programs\DeepSeek Harness\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add dsh-qq-access
+> ```
+
+安装完成后重启 Harness，左侧栏即可看到 **QQ 接入**。
+
+### 方式二：在面板里安装（不想用命令行时）
+
+1. 打开 Harness，左侧栏进入 **插件** 页面，点 **添加插件**（Add plugin）。
+2. 输入 `dsh-qq-access`，或先下载 tgz、把**完整路径**粘进去（相对路径会被宿主拒绝）。
+3. 重启 Harness，左侧栏出现 **QQ 接入**。
+
+装完不用先去终端写配置文件——直接点开面板，它会自己引导（见下面的「首次配置」）。
+
+### 方式三：下载 tgz 安装
+
+连不上 npm 时用这种方式。
+
+1. 前往 [GitHub Releases](https://github.com/Applepinea/dsh-qq-access/releases/latest)，下载 `dsh-qq-access.tgz`。
+   同一个 Release 里还有个带版本号的 `dsh-qq-access-1.1.4.tgz`，两个文件内容完全一致，下哪个都行。
+2. 用下载后的完整路径安装（PowerShell 里路径带空格要加引号）：
+
+```powershell
+dsh plugin --profile desktop add "$env:USERPROFILE\Downloads\dsh-qq-access.tgz"
+```
+
+> 注意：`--profile` 必须与实际运行的 Harness 环境一致。桌面端用 `desktop`，网页端用 `web`。
 
 ### 首次配置
 
-插件默认配置文件位置：
+**推荐：直接在面板里完成。**
+
+装好插件、重启 Harness 后点开左侧栏的 **QQ 接入**。这时还没有配置文件，面板会显示「首次配置」那一屏：
+
+1. 填 **登录用 QQ 号**（要拿来当机器人的那个号）。
+2. 选填 **管理员 QQ 号**（你自己的号，用于远程管理；留空表示只在本机 Harness 里管理）。
+3. 点 **生成配置**。Token、事件签名密钥、NapCat WebUI token、三个端口全部由插件随机生成，你不用自己编。
+4. 重载插件（在宿主里禁用再启用一次，或重启 Harness）。托管模式下插件会自动准备 NapCat 并打开扫码页，用第 1 步填的号扫码即可。
+
+配置文件默认落在：
 
 ```text
 %USERPROFILE%\.dsh-qq-access\config.json
 ```
 
-你可以通过配置向导自动生成配置：
+> 生成配置之后面板上的其它设置才会生效——在那之前插件只挂了面板，QQ 接入没有启动（面板会提示这一点）。
+
+**进阶：用命令行向导。**
+
+适合脚本化部署，或面板打不开的时候。**必须先进到插件目录**再执行，`cli.mjs` 是插件自带的脚本：
 
 ```powershell
+cd "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-qq-access"
 node cli.mjs setup
 ```
 
-向导会引导你输入 QQ 账号，并生成随机 Token 和事件签名密钥。
+向导会问同样的两个 QQ 号，生成随机 Token 与事件签名密钥。在 Windows x64 上默认使用 NapCat 托管模式。
 
-在 Windows x64 上，向导默认使用 NapCat 托管模式，并自动准备 NapCat 运行环境。
-
-配置完成后，启动 Harness，按照提示完成 QQ 扫码登录即可。
-
-### 手动配置
-
-如果需要手动配置，可以复制示例文件：
+**进阶：手写配置。**
 
 ```powershell
 Copy-Item examples/config.example.json "$env:USERPROFILE\.dsh-qq-access\config.json"
 ```
 
-至少需要确认以下字段：
+同样要在插件目录下执行。至少需要确认：
 
 ```json
 {
@@ -189,6 +212,7 @@ Copy-Item examples/config.example.json "$env:USERPROFILE\.dsh-qq-access\config.j
 `onebot.token` 和 `events.secret` 均应使用不少于 16 位的随机字符串。
 
 托管模式下，插件会自动将相关连接配置写入 NapCat，无需重复手动配置。
+
 
 ---
 
@@ -213,7 +237,7 @@ Copy-Item examples/config.example.json "$env:USERPROFILE\.dsh-qq-access\config.j
 | `emotion` | 情感与关系设置 |
 | `life` | 虚拟生活设置 |
 | `qzoneProactive` | QQ 空间主动动态设置 |
-| `model` | 指定使用的模型 |
+| `model` | 指定使用的模型；可以在同一个对象里写 `reasoningEffort` 指定推理等级，留空表示用服务商默认 |
 
 ### 群聊回复模式
 
@@ -297,7 +321,13 @@ QQ 接入意味着插件能够代表你的 QQ 账号执行操作，因此安全�
 
 ## 🛠️ 常用命令
 
-在插件目录下执行：
+下面的命令都要**先进到插件目录**再执行（`cli.mjs` 是插件自带的脚本，不在 PATH 里）：
+
+```powershell
+cd "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-qq-access"
+```
+
+网页端把 `desktop` 换成 `web`。
 
 | 命令 | 说明 |
 | --- | --- |
@@ -309,7 +339,7 @@ QQ 接入意味着插件能够代表你的 QQ 账号执行操作，因此安全�
 
 ### 故障排查
 
-如果插件无法正常连接 QQ，可以先运行：
+如果插件无法正常连接 QQ，先在插件目录下运行：
 
 ```powershell
 node cli.mjs doctor

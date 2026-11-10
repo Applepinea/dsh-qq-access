@@ -565,7 +565,7 @@ API Key 没有形状校验。出过一次事故：整段人格文本（4264 字�
 实测三个目标连发 6 次是 111 → 222 → 333 → 111 → 222 → 333，重启后继续从 111 开始。
 
 测试加到 36 项，多两项：轮换顺序跨重启、旧格式能读出配额。
-## 十、1.1.1：会话连续性与安全加固
+## 十、1.1.4：会话连续性、安全加固与面板修复
 
 ### 会话连续性
 
@@ -670,3 +670,187 @@ CI 的时区问题：`isoDate` 那条测试用「本地日期 ≠ UTC 日期」�
 改 `tools.mjs` 时我用「按行号覆盖」的方式插注释，把 `qq_qzone_leave_message` 整个函数定义覆盖掉了，工具从 38 变 37。
 
 发现后从交付目录恢复了原文件，改用「只替换单行内容、不增删行」的方式重做。教训是：**给代码加注释时不要用行号定位替换，行数一变后面全错位。**
+## 十一、1.1.4 补记：推理等级与面板三处误导
+
+### 推理等级
+
+面板模型那一栏下面多了一个「推理等级」下拉。档位不是插件写死的，是拿当前选中的 provider/model 去问宿主：
+
+```js
+register(`${PREFIX}/model-reasoning`, async (req, res) => {
+  const info = await llm.resolveModelInfo(provider, model);
+  return json(res, 200, { ok: true, supported: true, efforts: info.reasoning.efforts, defaultEffort: info.reasoning.defaultEffort ?? null });
+});
+```
+
+没做成 `/models` 的一部分，是因为那要给 38 个模型各调一次 `resolveModelInfo`，而面板一次只看得到一组。
+
+第一项是「服务商默认」，它的值不是 `"default"` 而是**空串**：
+
+```js
+const PROVIDER_DEFAULT_REASONING_VALUE = "";
+```
+
+宿主的判定写得很细 —— 空串和「不写这个键」不是一回事：
+
+```js
+// app.asar: LlmRuntime.resolveCallWithInfo
+const effective = requested ?? reasoning.defaultEffort;
+```
+
+不写键，宿主用 `defaultEffort` 兜底；写空串且模型没有 `defaultEffort`，才算真的「用服务商默认」。所以保存时干脆省掉这个键，不存空串。
+
+顺带修掉一个一直存在的丢弃：`hostSelection()` 之前只对主对话路径生效，主动消息、情感分析、表情分类、虚拟生活生成这四处的一次性回合都是手写 `{ provider, model }`，等级被丢掉。统一改成调 `hostSelection(defaultSelection)`。
+
+`sameAsRoute` 也跟着改成连等级一起比 —— 同一个模型的两个档位，一个没产出时另一个也许能跑。
+
+### 面板显示不再撒谎
+
+**问题一：换服务商不重置模型。** 原来服务商的 `onChange` 只写 `modelProvider`，`modelId` 保持原值。切到 `deepseek-official` 后 `modelId` 还是 `deepseek-v4.1-flash`，而那是 workbuddy 的 ID。保存成功，请求静默失败。
+
+**问题二：显示层静默退回第一项。** 下拉框找不到存着的值就显示 `models[0]`，看起来完全正常，配置里却是坏的。
+
+改成显式列出「宿主已无此服务商」「该服务商下没有这个模型」两个失效项，值就是存着的那个字符串，用户一眼能看到坏在哪。
+
+选项标签恒为 `name（id）` 的格式，因为两个服务商都有叫 `DeepSeek-V4.1-Flash` 的模型，只显示名字分不清。
+
+### 城市被改回「华盛顿」
+
+现场是 `city` 被写成了默认值「华盛顿」，经纬度却还停在用户自己填的那一组。一个在美洲、一个在国内，明显对不上。根因在面板：
+
+```js
+// lib/client.js 旧代码
+city: String(form.wxCity ?? '').trim() || '华盛顿',
+```
+
+输入框没初始化该字段时是空串，被静默替换成默认值再提交。改成有值才提交：
+
+```js
+...(String(form.wxCity ?? '').trim() ? { city: String(form.wxCity).trim() } : {}),
+```
+
+同时加了城市与经纬度的一致性提示：内置约 50 个城市坐标，用 haversine 算球面距离，超过 200 公里才提示。空坐标和陌生城名不提示 —— `Number("") === 0` 会让空串被当成合法纬度，这里专门判了。
+
+### 隐私
+
+去掉两处写死本机绝对路径的调试日志：`lib/ui.mjs` 的 `/ping` 接口和 `lib/runtime.mjs` 的图片处理日志都硬编码了 `C:/Users/<用户名>/.dsh-qq-access/debug.log`。改成走 `lib/util.mjs` 的 `noteLog()`，写到数据目录下的 `debug.log`。
+
+### 测试
+
+71 项，70 过 1 跳过。新增的几条测的是「症状会不会复发」：
+
+- 换服务商要把模型重置成新服务商的第一个
+- 下拉框要显示真实存着的值，不能悄悄替成第一项
+- 面板保存不能把空的城市改回默认值
+- 面板要能发现城市和经纬度明显对不上
+- 推理等级要跟模型选择一起存；一次性回合也要带上
+- 档位菜单要按当前模型问宿主
+- 插件里不能出现本机绝对路径；调试用的 ping 不该留在发布版里
+
+城市提示那条测试用的是「把 `lib/client.js` 里 `CITY_POINTS` 到 `QqPanel()` 之间那段源码截出来，用 `new Function` 执行拿到 `cityDistanceWarning` 再断言」，这样不用把客户端代码拆成模块也能测。
+## 十二、1.1.4 补记：开箱即用的那道坎
+
+### 症状
+
+新装插件、没有配置文件，插件**根本不出现**在左侧栏。
+
+不是「出现了但报错」，是连面板都没有。宿主日志里只有一行：
+
+```text
+skippedBundles: dsh-qq-access
+```
+
+### 根因
+
+`index.mjs` 的执行顺序：
+
+```js
+const resolved = await loadConfig(config.configPath || defaultConfigPath());
+// ...
+const disposeUi = registerUi(ctx, runtime, resolved.configPath);
+```
+
+`loadConfig` 在前，`registerUi` 在后。没有配置文件时前者抛：
+
+```text
+未找到配置 C:\Users\<用户名>\.dsh-qq-access\config.json。请先运行 node cli.mjs setup。
+```
+
+`apply()` 直接失败，宿主按 `reportSkippedBundles` 的语义把这个 bundle 记成 skipped —— 整个插件的 UI 也就没了。
+
+而这条错误信息让用户跑的命令，在插件目录外还跑不了：
+
+```text
+Error: Cannot find module '...\newbie\cli.mjs'
+code: 'MODULE_NOT_FOUND'
+```
+
+闭环就此断开：面板不出现 → 报错让人用 CLI → CLI 得先进插件目录 → 但没人告诉他这一点。
+
+### 改法
+
+**`lib/config.mjs`**：`loadConfig` 的 ENOENT 分支给错误挂上 `code = 'ENOENT'`，让调用方能区分「还没配置」和「读盘失败」。
+
+```js
+const wrapped = new Error(`未找到配置 ${path}。请先运行 node cli.mjs setup。`);
+wrapped.code = 'ENOENT';
+throw wrapped;
+```
+
+同时新增 `bootstrapConfig({ selfId, ownerIds })`：每次调用重新 `randomBytes(24).toString('hex')` 生成 token / 事件签名 / WebUI token。`cli.mjs setup` 和面板 `/bootstrap` 共用这一份，避免两处默认值漂移。
+
+**`index.mjs`**：捕获 `ENOENT`，用 `runtime = null` 把面板挂上，然后 return。
+
+```js
+catch (error) {
+  if (error?.code !== 'ENOENT') throw error;
+  logger.warn?.('[dsh-qq-access] 还没有配置文件：' + configPath + '。面板已打开，请在页面顶部生成配置，然后重载插件。');
+  const disposeUi = registerUi(ctx, null, configPath);
+  ctx.on('dispose', async () => { try { await disposeUi?.(); } catch (...) { noteLog(...); } });
+  return;
+}
+```
+
+**`lib/ui.mjs`**：
+
+- 新增 `loadRawOrTemplate()`：读不到就返回 `bootstrapConfig({ selfId: '' })` 加 `missing: true`。
+- `/state` 返回 `missingConfig` 与 `runtimeReady`，面板靠这两个字段决定显示哪一屏。
+- 新增 `POST /bootstrap`：先 `normalizeConfig(template, configPath)` 校验（非法号码在写盘前就 400），再 `mkdir` + `atomicWriteJson`。
+- `/config` POST 在缺配置时返回 409 并指向 `/bootstrap` —— 不许在「还没有配置」的状态下走增量保存。
+- **12 处 `runtime.xxx` 裸解引用全部改成 `runtime?.xxx`**。这些本来是 TypeError，被 `register` 的 try/catch 变成 500，但改成可选链后降级模式下的行为更可预期。
+- 删掉顶层 `import { openLoginBrowser } from './napcat.mjs'`，改成就地 `await import()`。这条 import 链会经 `napcat.mjs → napcat-install.mjs` 拉进 `yauzl`，等于让「只挂面板」也必须先装依赖 —— 实测就是这条把 `node --test` 卡住的。
+
+**`lib/client.js`**：新增一屏「首次配置」，两个输入框 + 「生成配置」按钮，**排在 `if (!form)` 之前** —— `form` 要等 `/state` 返回完整 config 才有，而这一屏就是要取代整个表单。
+
+### 顺手收掉的两个口子
+
+- `/state` 之前整段回传 `napcat`，`webuiToken` 明文出现在响应里。改成 `maskSecret(raw.napcat, 'webuiToken')`，只给 `hasWebuiToken`。扫码链接 `loginPage` 里仍然带着 token（那个是给用户点开用的），但缺配置时返回 `null` —— 那时的 token 是临时生成的，扫了也没用。
+- `index.mjs` dispose 步骤里最后一处写死 `C:/Users/<用户名>/.dsh-qq-access/debug.log` 的兜底日志改成 `noteLog()`。
+
+### 自检
+
+78 项，77 过 1 跳过。新增的 7 条：
+
+- 没有配置文件时 `loadConfig` 抛的错带 ENOENT
+- `bootstrapConfig` 产出的配置能直接通过 `normalizeConfig`，且密钥每次都不一样
+- 缺配置时面板照常注册，`/state` 返回 `missingConfig` 而不是 500
+- 缺配置时 `/config` 拒绝保存并指向 `/bootstrap`
+- `/bootstrap` 能从面板直接写出第一份配置
+- 首次配置那一屏在客户端里真的存在，且不需要 runtime
+- `apply()` 在缺配置时不抛异常，只挂面板
+
+真机跑了三遍（临时目录当 `DSH_QQ_CONFIG`，`runtime = null`）：
+
+```text
+[warn] [dsh-qq-access] 还没有配置文件：...\config.json。面板已打开...
+apply() 没抛异常 ✓
+注册了 20 个端点; 1 个 dispose 钩子
+--- /state --- {"ok":true,"missingConfig":true,"runtimeReady":false,"loginPage":null}
+--- /bootstrap --- 200 {"ok":true,"configPath":"...","napcatMode":"managed"}
+--- 生成后 /state --- {"missingConfig":false,"selfId":"10001"}
+dispose() 没抛异常 ✓
+```
+
+### 文档
+
+README 的「首次配置」改成面板优先，命令行向导降为进阶并明确要求先进插件目录；补「在面板里安装」一条路；补 `dsh` 不在 PATH 时用完整路径调用的写法。CHANGELOG 与 release notes 同步。

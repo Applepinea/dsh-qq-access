@@ -1,10 +1,11 @@
 #!/usr/bin/env node
+
 import { randomBytes } from 'node:crypto';
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
-import { loadConfig, defaultConfigPath, normalizeConfig } from './lib/config.mjs';
+import { bootstrapConfig, loadConfig, defaultConfigPath, normalizeConfig } from './lib/config.mjs';
 import { OneBotClient } from './lib/onebot.mjs';
 import { assert, qqId } from './lib/util.mjs';
 import { NAPCAT_RELEASE, installNapcat, inspectInstallation } from './lib/napcat-install.mjs';
@@ -24,25 +25,10 @@ async function setup() {
     const selfId = qqId((await rl.question('用于登录 NapCat 的 QQ 号：')).trim());
     const owner = (await rl.question('可远程管理插件的另一个 QQ 号（可留空，仅在本机 Harness 管理）：')).trim();
     if (owner) { qqId(owner); assert(owner !== selfId, '管理员必须用另一个 QQ 号私聊；登录账号自己的出站消息不会触发自动回复。'); }
-    const token = randomBytes(24).toString('hex'), secret = randomBytes(24).toString('hex');
-    const managed = process.platform === 'win32' && process.arch === 'x64';
-    const config = {
-      selfId, ownerIds: owner ? [owner] : [], dataDir: './data',
-      onebot: { apiUrl: 'http://127.0.0.1:3000', token, timeoutMs: 15000 },
-      events: { port: 5701, secret },
-      napcat: { mode: managed ? 'managed' : 'external', autoInstall: true, autoOpenLogin: true, webuiPort: 6099, webuiToken: randomBytes(24).toString('hex') },
-      access: { privateMode: 'all', groupMode: 'all', privateIds: [], groupIds: [], blockedUsers: [], blockedGroups: [] },
-      reply: { private: true, group: 'smart', smartThreshold: 3, selfNames: [], interests: [], learnInterests: true, maxChars: 2000, contextMessages: 20, concurrency: 4, maxLiveSessions: 64 },
-      retentionDays: 30, ownerHarnessTools: false,
-      rate: { globalGapMs: 1000, peerGapMs: 3000, maxPerMinute: 20 },
-      qzone: { enabled: true, timeoutMs: 30000, cookieTtlMs: 600000 },
-      emotion: { enabled: false, perSession: false, useModel: true, inject: true, privacyLevel: 1, significanceThreshold: 5 },
-      life: { enabled: true, inject: true, proactive: false },
-      memes: { enabled: true, autoCollect: false, requireApproval: true, visionClassify: true, autoSend: false },
-      search: { enabled: true, apiKey: '' },
-      qzoneProactive: { enabled: false, maxPerDay: 1, dailyChance: 100, timeTone: true, windowStart: '08:00', windowEnd: '23:00', minGapMinutes: 180 },
-      persona: '你是一名友好自然的 AI QQ 助手。使用中文简洁聊天，诚实说明自己是 AI；不发送思考过程、工具日志或其他人的私聊内容。',
-    };
+    const config = bootstrapConfig({ selfId, ownerIds: owner ? [owner] : [] });
+    const managed = config.napcat.mode === 'managed';
+    const token = config.onebot.token;
+    const secret = config.events.secret;
     await mkdir(dirname(configPath), { recursive: true, mode: 0o700 });
     await writeFile(configPath, JSON.stringify(config, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
     console.log(`\n已生成配置：${configPath}`);
