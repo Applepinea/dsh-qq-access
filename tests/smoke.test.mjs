@@ -142,7 +142,7 @@ test('主动消息的配额跨重启有效', async () => {
     assert.ok((second.state.fired[isoDate(today)] ?? []).includes('w-test-0'));
     await second.flush();
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    await removeTempDir(dir, rm);
   }
 });
 
@@ -186,7 +186,7 @@ test('主动消息按「次」算配额，不按段数', async () => {
     assert.equal(life.sentCount(today), 2);
     await life.flush();
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    await removeTempDir(dir, rm);
   }
 });
 
@@ -233,7 +233,7 @@ test('主动消息时间按日期随机，但当天固定', async () => {
     assert.equal(life.windowAt(day, win, { jitterMinutes: 0 }), 17 * 60 + 30);
     await life.flush();
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    await removeTempDir(dir, rm);
   }
 });
 
@@ -561,7 +561,7 @@ test('穿搭按当天天气筛选，天气对不上就不会被抽到', async ()
     assert.equal(life.outfitsFor(new Date(), null).length, 1);
     await life.flush();
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    await removeTempDir(dir, rm);
   }
 });
 test('温度区间接受多种字段名', async () => {
@@ -617,7 +617,7 @@ test('昼夜天气不同时会抽两套不同的衣服', async () => {
     assert.equal(d2.outfit?.id, d2.eveningOutfit?.id, '天气一致时应当同一套');
     await life.flush();
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    await removeTempDir(dir, rm);
   }
 });
 test('主动消息内容方向：默认空、超长截断', async () => {
@@ -686,7 +686,7 @@ test('多目标轮换顺序跨重启有效', async () => {
     assert.equal(sorted[0].peerId, '111', '应当轮回到最早的那个');
     await reopened.flush();
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    await removeTempDir(dir, rm);
   }
 });
 
@@ -716,7 +716,7 @@ test('旧的 sent 纯数字格式仍能读出配额', async () => {
     assert.deepEqual(life.lastSentByTarget(), {});
     await life.flush();
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    await removeTempDir(dir, rm);
   }
 });
 test('面板有未保存标记，且所有表单修改都走同一个入口', () => {
@@ -975,7 +975,7 @@ test('配置损坏时能识别原因并从备份恢复', async () => {
     await writeFile(cfg, '{"selfId":"1",}');
     await assert.rejects(() => loadConfig(cfg), /JSON 格式有误/);
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    await removeTempDir(dir, rm);
   }
 });
 
@@ -1039,7 +1039,9 @@ test('主动消息面板：离散度可调，且所有 useState 声明完整', (
   }
   const called = new Set();
   for (const m of client.matchAll(/\b(set[A-Z]\w*)\s*\(/g)) called.add(m[1]);
-  const missing = [...called].filter((s) => !declared.has(s));
+  // 浏览器/Node 自带的 setXxx 不是 useState 的 setter，别当成漏声明。
+  const builtin = new Set(['setInterval', 'setTimeout', 'setImmediate']);
+  const missing = [...called].filter((s) => !declared.has(s) && !builtin.has(s));
   assert.deepEqual(missing, [], `调用了未声明的 setter: ${missing.join(', ')}`);
 
   // 每个 useXxx 的返回值也要被用到的地方有声明。
@@ -1138,7 +1140,15 @@ test('重抽会真正改变今天的次数和时间', async () => {
     assert.equal(life2.daySeed(day), seedBefore, '种子要持久化');
     assert.equal(life2.plannedWindows(day, opts).map((w) => w.at).join(','), winsBefore, '重启后安排要一致');
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    // VirtualLife 的落盘是排队进行的，rm 可能正好撞上还没写完的临时文件；
+    // ENOTEMPTY 就重试几次，别让这条测试偶发失败。
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try { await removeTempDir(dir, rm); break; }
+      catch (error) {
+        if (attempt === 4) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      }
+    }
   }
 });
 
@@ -1159,7 +1169,7 @@ test('重抽不动已发送记录', async () => {
     assert.equal(life.state.sent[key].length, 2, '已发送记录不能被清 —— 否则配额会超发');
     assert.deepEqual(life.state.fired[key], undefined, '已触发记录要清');
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    await removeTempDir(dir, rm);
   }
 });
 test('面板每个 form 字段都有初始化，否则保存会写空值', () => {
@@ -1331,7 +1341,7 @@ test('时间随机幅度真的影响窗口时间', async () => {
       assert.ok(avail.some((a) => m >= a.start && m < a.end), `${at.at} 抖动后跑出了可用时段`);
     }
   } finally {
-    await rm(dir, { recursive: true, force: true });
+    await removeTempDir(dir, rm);
   }
 });
 
@@ -1339,10 +1349,10 @@ test('指定模型没产出时退回宿主默认重试', () => {
   const rt = readFileSync(join(root, 'lib/runtime.mjs'), 'utf8');
   // 一个错误的服务商/模型名不会报错，只会产生零事件。
   // 所以要排候选、逐个试，而不是认准一个配置就不放。
-  assert.ok(/#proactiveTurn\(prompt, agentOptions\)/.test(rt), '要有可复用的单回合执行');
+  assert.ok(/#proactiveTurn\(prompt, agentOptions, target\)/.test(rt), '要有可复用的单回合执行（带 target，供注入记忆与念头）');
   assert.ok(/candidates\.push\(route\)/.test(rt), '候选里要有指定模型');
   assert.ok(/candidates\.push\(fallback\)/.test(rt), '候选里要有宿主默认');
-  assert.ok(/if \(events > 0\) return text;/.test(rt), '有事件才算成功');
+  assert.ok(/if \(events > 0\) return \{ text, raw \};/.test(rt), '有事件才算成功，并把原始事件带回去记念头');
   assert.ok(/改用 \$\{label\(candidates\[i \+ 1\]\)\} 重试/.test(rt), '重试要留日志');
 });
 
@@ -1525,17 +1535,402 @@ test('首次配置那一屏在客户端里真的存在，且不需要 runtime', 
   assert.ok(client.indexOf('state && state.missingConfig') < client.indexOf('if (!form) return'), '缺配置那一屏要排在加载态之前');
   const ui = readFileSync(join(root, 'lib/ui.mjs'), 'utf8');
   assert.ok(/register\(`\$\{PREFIX\}\/bootstrap`/.test(ui), '服务端要有 /bootstrap');
-  assert.ok(/runtimeReady: Boolean\(runtime\)/.test(ui));
+  assert.ok(/runtimeReady: runtimeCurrent != null/.test(ui), 'runtimeReady 要反映真实运行态（首次配置时是 false）');
 });
 
 test('apply() 在缺配置时不抛异常，只挂面板', () => {
   const index = readFileSync(join(root, 'index.mjs'), 'utf8');
   assert.ok(/error\?\.code !== 'ENOENT'\) throw error/.test(index), '只吞 ENOENT，其它读取错误照常抛');
-  assert.ok(/registerUi\(ctx, null, configPath\)/.test(index), '缺配置时用 null runtime 挂面板');
+  // 面板永远先挂上（runtime 之后由 start() 填），首次配置靠 /bootstrap 的回调启动；
+  assert.ok(/registerUi\(ctx, null, configPath, \{/.test(index), '缺配置时用可替换 runtime 挂面板');
+  assert.ok(/boot: start,/.test(index), '要把握把 start 交给 /bootstrap，生成配置后当场启动');
+  assert.ok(/lastError: \(current\) =>/.test(index), 'runtime 还没建起来就失败时，错误要能交给 /state');
+  assert.ok(/if \(started\) return started;/.test(index), 'start() 要幂等，重复调用不能起两份 NapCat');
   // 以前这两处把本机绝对路径写进 debug.log，发布出去等于泄露用户名。
   assert.ok(!/homedir\(\), '\.dsh-qq-access', 'debug\.log'/.test(index), '调试日志要走 noteLog');
   assert.ok(/noteLog\(/.test(index));
 });
+test('主动消息默认会带最近几条聊天记录', () => {
+  const rt = readFileSync(join(root, 'lib/runtime.mjs'), 'utf8');
+  // 只喂生活状态的旧实现接不上任何具体的事：昨天说考完试，今天照样问「在忙吗」。
+  assert.ok(/#proactiveContext\(target, limit, now, signal\)/.test(rt), '要有取上下文的私有方法');
+  assert.ok(/this\.store\.query\(\{ kind: target\.kind, peerId: target\.peerId, limit, signal \}\)/.test(rt), '要按目标会话查归档，且把 signal 传下去');
+  // 关键：不能让她把历史当成「刚发来的消息」直接回复。
+  assert.ok(/背景资料，不是要你回复它们/.test(rt), '提示词要说明这是背景而非待回复的消息');
+  assert.ok(/不要重复最近说过的话/.test(rt), '要明确禁止复读最近说过的话');
+});
+
+test('主动消息的上下文条数可配，0 等于关掉', () => {
+  const cfg = readFileSync(join(root, 'lib/config.mjs'), 'utf8');
+  assert.ok(/proactiveContextMessages: integer\(raw\.life\?\.proactiveContextMessages, 8, 0, 30/.test(cfg), '默认 8 条，范围 0–30');
+  const rt = readFileSync(join(root, 'lib/runtime.mjs'), 'utf8');
+  assert.ok(/contextLimit > 0/.test(rt), '0 的时候应当跳过查询');
+  const base = (life) => ({ ...minimal(), life });
+  assert.equal(normalizeConfig(base({})).life.proactiveContextMessages, 8);
+  assert.equal(normalizeConfig(base({ proactiveContextMessages: 0 })).life.proactiveContextMessages, 0);
+  assert.equal(normalizeConfig(base({ proactiveContextMessages: 30 })).life.proactiveContextMessages, 30);
+  assert.throws(() => normalizeConfig(base({ proactiveContextMessages: 31 })), /0–30/);
+});
+
+test('读归档失败时主动消息照发，只是不带上下文', () => {
+  const rt = readFileSync(join(root, 'lib/runtime.mjs'), 'utf8');
+  const start = rt.indexOf('async #proactiveContext(');
+  const end = rt.indexOf('async #pickProactiveTarget(');
+  assert.ok(start > 0 && end > start, '两段方法要能各自定位');
+  const body = rt.slice(start, end);
+  // 归档读不出来是常态（第一次聊天、文件被清理），不能因此整天不发消息。
+  assert.ok(/catch \(error\)/.test(body), '查询要有 try/catch');
+  assert.ok(/return null/.test(body), '失败时返回 null 让调用方跳过');
+  assert.ok(/noteLog\(/.test(body), '失败要留一行日志，否则没法排查');
+});
+
+test('想过但没说的内容会落盘、并注入到新会话', () => {
+  const rt = readFileSync(join(root, 'lib/runtime.mjs'), 'utf8');
+  // 宿主会话一被回收，reasoning 就没了 —— 所以每轮要单独存一份。
+  assert.ok(/#proactiveTurn\(prompt, agentOptions, target\)/.test(rt), '主动消息这一回合要能拿到 target');
+  assert.ok(/this\.recordThoughts\(/.test(rt), '正常回复结束后要落盘念头');
+  assert.ok(/this\.thoughtPromptBlock\(/.test(rt), '要把念头注入回提示词');
+  // 念头属于「她自己的内心活动」，不能混进记忆（那份记的是对方说过的话）。
+  const cap = readFileSync(join(root, 'lib/thoughts.mjs'), 'utf8');
+  assert.ok(/ThoughtStore/.test(cap), '要有独立的念头存储');
+  assert.ok(/dataDir, 'thoughts'/.test(cap), '落在 data/thoughts 下，不跟记忆混在一起');
+  assert.ok(/MAX_PER_PERSON/.test(cap), '要有每人上限，否则文件会无限长');
+  assert.ok(/不要复述/.test(cap), '注入时必须强调不要复述，否则会把「人设」念出来');
+});
+
+test('念头的配置项齐全，默认开启但不吵', () => {
+  const cfg = readFileSync(join(root, 'lib/config.mjs'), 'utf8');
+  assert.ok(/limit: integer\(raw\.thoughts\?\.limit, 3, 0, 10/.test(cfg), '默认 3 条，范围 0–10');
+  assert.ok(/maxAgeHours: integer\(raw\.thoughts\?\.maxAgeHours, 48, 1, 720/.test(cfg), '默认 48 小时');
+  assert.equal(normalizeConfig(minimal()).thoughts.enabled, true, '默认开启');
+  assert.equal(normalizeConfig(minimal()).thoughts.inject, true, '默认注入');
+  assert.equal(normalizeConfig(minimal()).thoughts.limit, 3);
+  // 老配置没有这一段也要能起来。
+  assert.doesNotThrow(() => normalizeConfig(minimal()));
+});
+
+test('ThoughtStore 存取、去重、过期都按预期', async () => {
+  const dir = join(tmpdir(), 'dsh-thoughts-' + Math.random().toString(36).slice(2, 8));
+  const { ThoughtStore, renderThoughtBlock, extractThoughtParts } = await import('../lib/thoughts.mjs');
+  const { rm } = await import('node:fs/promises');
+  try {
+    const store = new ThoughtStore({ dataDir: dir, logger: { warn() {} } });
+    await store.init();
+    const now = Date.now();
+    // 太短的（如「Now reply.」）不算念头。
+    assert.equal(await store.remember('10001', ['Now reply.'], { at: now }), 0, '过短的片段要丢掉');
+    const long = '用户说中午好，我是傲娇女友人设，需要分多条回复，先想想内容再说';
+    assert.equal(await store.remember('10001', [long], { at: now }), 1);
+    // 同样的内容不重复存。
+    assert.equal(await store.remember('10001', [long], { at: now + 1000 }), 0, '同一句话只存一次');
+    const recent = store.recent('10001', { limit: 3, maxAgeHours: 48, now: now + 1000 });
+    assert.equal(recent.length, 1);
+    assert.ok(recent[0].text.includes('傲娇女友人设'));
+    // 超过有效期就不再注入。
+    assert.equal(store.recent('10001', { limit: 3, maxAgeHours: 1, now: now + 3 * 3600_000 }).length, 0, '过期的念头不该再注入');
+    const block = renderThoughtBlock({ thoughts: recent });
+    assert.ok(block.includes('不要复述'), '提示词必须写明不要复述');
+    // 只取 reasoning，不要正文。
+    const parts = extractThoughtParts([
+      { type: 'assistant/message', data: { message: { content: [
+        { type: 'reasoning', text: long },
+        { type: 'text', text: '这是要发出去的话，不该被当成念头' },
+      ] } } },
+    ]);
+    assert.deepEqual(parts, [long], '只取 reasoning，不把发出去的正文当念头');
+  } finally {
+    await removeTempDir(dir, rm);
+  }
+});
+
+test('面板不再直接 await res.json()，失败时给人话', () => {
+  const client = readFileSync(join(root, 'lib/client.js'), 'utf8');
+  // 第二次启动时最容易撞上的两个场景：宿主路由还没挂上（空响应），
+  // 或者插件那一半没启用、请求落到 SPA 兜底（回 HTML）。
+  // 两种情况直接 await res.json() 都会抛英文解析错误，用户看不懂。
+  // 注释里提到那件事不算，只看真正被执行的代码。
+  const code = client.split(/\r?\n/).filter((line) => !/^\s*(\*|\/\/|\/\*)/.test(line)).join("\n");
+  const bare = (code.match(/await res\.json\(\)/g) ?? []).length;
+  assert.equal(bare, 0, '还有 ' + bare + ' 处裸 res.json()');
+  assert.ok(/async function readJson\(response\)/.test(client), '要有统一的 JSON 读取');
+  assert.ok(/EMPTY_RESPONSE/.test(client), '空响应要单独识别');
+  assert.ok(/BAD_RESPONSE/.test(client), '非 JSON 响应要单独识别');
+  assert.ok(/插件服务还没准备好/.test(client), '空响应要给出可操作的中文提示');
+  assert.ok(/插件服务还没挂上/.test(client), 'HTML 兜底要给出可操作的中文提示');
+});
+
+test('服务端不会把响应写两次', () => {
+  const ui = readFileSync(join(root, 'lib/ui.mjs'), 'utf8');
+  // handler 里既 res.end 又 return json(...) 会让第二次写抛
+  // ERR_STREAM_WRITE_AFTER_END，客户端拿到的就是半截 body。
+  assert.ok(/if \(res\.writableEnded \|\| res\.headersSent\) return;/.test(ui), 'json() 要防重复写');
+  assert.ok(/if \(res\.writableEnded \|\| res\.headersSent\) res\.destroy\?\.\(\)/.test(ui), '出错时已发过响应就断开连接');
+});
+
+test('NapCat 安装的每个耗时阶段都有进度，不留白屏等待', () => {
+  const inst = readFileSync(join(root, 'lib/napcat-install.mjs'), 'utf8');
+  const nap = readFileSync(join(root, 'lib/napcat.mjs'), 'utf8');
+  // 以前只有下载阶段有回调，校验旧包 / 解压 / 校验解压结果全是静默的，
+  // 面板会停在「正在检查 NapCat 是否已安装」好几十秒，看着像卡死。
+  for (const stage of ['正在校验上次下载的运行包', '正在下载 NapCat 运行包', '正在解压运行包', '正在校验解压结果']) {
+    assert.ok(inst.includes(stage), '缺少阶段提示：' + stage);
+  }
+  assert.ok(/onStage/.test(inst) && /onStage: \(message\)/.test(nap), 'onStage 要一路接到 #noteProgress');
+  assert.ok(/onExtract/.test(inst) && /onExtract: \(done, total\)/.test(nap), '解压要有进度');
+  // 缩略成「已解压 N/M 个文件」：unit 决定面板用文件数还是字节。
+  assert.ok(/unit: 'files'/.test(nap), '解压进度要标成文件数');
+  assert.ok(/unit: 'bytes'/.test(nap), '下载进度要标成字节');
+  // 换阶段必须把 received/total 归零，否则下载的 118.3/118.3 会留在解压阶段。
+  assert.ok(/onStage: \(message\) => this\.#noteProgress\('install', message, \{ received: 0, total: 0/.test(nap), '换阶段要清零计数');
+  const client = readFileSync(join(root, 'lib/client.js'), 'utf8');
+  assert.ok(/function progressDetail\(/.test(client), '面板要按单位显示进度明细');
+});
+
+test('自动回复不再只靠 60 秒轮询：入队即触发短防抖', () => {
+  const rt = readFileSync(join(root, 'lib/runtime.mjs'), 'utf8');
+  assert.ok(/scheduleFlush\(/.test(rt), 'accept 之后要排一次 flush');
+  assert.ok(/flushTimer/.test(rt), '防抖定时器要存在');
+  // 以前 accept() 只入队，回复要等下一次轮询，最长 60 秒没反应。
+  const acceptBody = rt.slice(rt.indexOf('async accept('), rt.indexOf('async restorePending('));
+  assert.ok(/this\.scheduleFlush\(\)/.test(acceptBody), 'accept 里必须触发；否则还是要等轮询');
+});
+
+test('whenIdle 有硬超时，卡住不会停掉所有回复', () => {
+  const rt = readFileSync(join(root, 'lib/runtime.mjs'), 'utf8');
+  assert.ok(/#awaitIdle\(/.test(rt), '要有带时限的等待');
+  assert.ok(/Promise\.race\(\[settled, timeout\]\)/.test(rt), '要和超时赛跑');
+  assert.ok(/agent\.cancel\?\./.test(rt), '超时要取消 agent');
+  // 三处调用点（自动回复 / 主动消息 / 情感分析）都要走带时限的版本
+  const bare = (rt.match(/await (record|handle)\.agent\.whenIdle\(\);/g) ?? []).length;
+  assert.equal(bare, 0, '还有 ' + bare + ' 处裸 whenIdle()');
+});
+
+test('账本允许 failed 和过期 pending 重做，uncertain 仍短路', () => {
+  const store = readFileSync(join(root, 'lib/store.mjs'), 'utf8');
+  assert.ok(/entry\.status === 'failed'/.test(store), 'failed 要允许重试');
+  assert.ok(/stalePending/.test(store), '卡住的 pending 要允许重做');
+  assert.ok(/if \(!retryable\) return/.test(store), 'uncertain 仍返回旧记录，不能重发');
+});
+
+test('自动回复检查发送结果，未确认时不标记已处理', () => {
+  const rt = readFileSync(join(root, 'lib/runtime.mjs'), 'utf8');
+  assert.ok(/entry\.status !== 'sent'/.test(rt), '要看账本返回的 status');
+  // lastMessageId 必须在整段发完之后才写。
+  // 定位 reply 里那处：它是唯一带 `auto:` 前缀的 send。
+  const sendAt = rt.indexOf('const entry = await this.send(');
+  assert.ok(sendAt > 0, 'reply 里要拿到 send 的返回值');
+  const markAt = rt.indexOf('record.lastMessageId = message.messageId;');
+  assert.ok(markAt > sendAt, '先发送、后标记（markAt=' + markAt + ' sendAt=' + sendAt + '）');
+  // 而且中间不能有 return 把标记跳过去
+  const between = rt.slice(sendAt, markAt);
+  assert.ok(between.includes("entry.status !== 'sent'"), '中间要检查发送结果');
+});
+
+test('恢复未回复队列不会盖掉刚入队的新消息', () => {
+  const rt = readFileSync(join(root, 'lib/runtime.mjs'), 'utf8');
+  assert.ok(/if \(this\.pending\.get\(key\)\?\.length\) continue;/.test(rt), 'await 之后要再检查一次');
+  // 引用和图片也要带回去，否则只靠「引用了她」过闸的消息恢复后就再也不回
+  assert.ok(/replyId: String\(lastIn\.replyId\)/.test(rt), '要恢复引用');
+  assert.ok(/images: lastIn\.images/.test(rt), '要恢复图片');
+});
+
+test('托管模式失败后 /retry 真的能重来', () => {
+  const idx = readFileSync(join(root, 'index.mjs'), 'utf8');
+  const ui = readFileSync(join(root, 'lib/ui.mjs'), 'utf8');
+  // 后台失败必须清掉 started 和 runtime，否则重试看到 runtimeCurrent 就直接返回
+  assert.ok(/started = null;/.test(idx), '要清 started');
+  assert.ok(/runtime = null;/.test(idx), '要清 runtime');
+  assert.ok(/runtime\.bootError = message;/.test(idx), '要保留原始错误，不能换成固定文案');
+  // /retry 只有真的连上才算「已经在运行」
+  assert.ok(/runtimeCurrent\?\.connected/.test(ui), '只有在线才算已在运行');
+});
+
+test('启动时加载记忆、情感和虚拟人生', () => {
+  const rt = readFileSync(join(root, 'lib/runtime.mjs'), 'utf8');
+  const init = rt.slice(rt.indexOf('async initialize('), rt.indexOf('this.identity = await this.client.verifyIdentity'));
+  for (const name of ['memory', 'emotion', 'life']) {
+    assert.ok(new RegExp('this\\.' + name + '\\?\\.init\\?\\.\\(\\)').test(init), name + ' 要在第一个回合之前 init');
+  }
+});
+
+test('情感按发言人记账，不按群号', () => {
+  const rt = readFileSync(join(root, 'lib/runtime.mjs'), 'utf8');
+  assert.ok(/peerId: this\.memoryPersonId\(message\) \|\| message\.senderId, kind: 'private'/.test(rt), '记录侧按人');
+  assert.ok(/emotionPromptBlock\(\{ peerId: this\.memoryPersonId\(message\)/.test(rt), '提示词侧也按人');
+});
+
+test('事实记忆不再把「记住」当成住址', () => {
+  const rt = readFileSync(join(root, 'lib/runtime.mjs'), 'utf8');
+  const rules = rt.slice(rt.indexOf('const rules = ['), rt.indexOf('for (const [pattern, key] of rules)') + 20);
+  // 单字「住」会把「记住我喜欢猫」判成住址，覆盖掉真住址
+  assert.ok(!/\[\/住\|在哪\//.test(rules), '住址规则不能用单字');
+  assert.ok(/我住在/.test(rules), '要用完整词');
+  // 宠物规则里不能有裸「猫」「狗」：否则「我喜欢猫」会命中宠物而不是喜好。
+  const petLine = rules.split('\n').find((l) => l.includes('对方.宠物')) ?? '';
+  assert.ok(petLine.length > 0, '宠物规则还在');
+  assert.ok(!/猫|狗/.test(petLine), '宠物规则含单字猫/狗：' + petLine.trim());
+  assert.ok(/我在\.\{0,8\}\(\?:上班/.test(rt), '「我在」要限定成真的陈述');
+});
+
+test('默认兴趣词全部至少两个字', () => {
+  const gate = readFileSync(join(root, 'lib/group-gate.mjs'), 'utf8');
+  const block = gate.slice(gate.indexOf('export const DEFAULT_INTERESTS = ['), gate.indexOf('];', gate.indexOf('export const DEFAULT_INTERESTS = [')));
+  const words = [...block.matchAll(/'([^']+)'/g)].map(m => m[1]);
+  assert.ok(words.length > 10, '词表还在');
+  const single = words.filter(w => w.length === 1);
+  assert.deepEqual(single, [], '还有单字词：' + single.join(','));
+  assert.ok(/WEAK_QUESTION_PATTERNS/.test(gate), '弱问号要显式登记，不靠正则长度');
+  assert.ok(/STOP_BIGRAMS/.test(gate), '学习要过滤常见虚词');
+});
+
+test('面板鉴权看 socket 远端地址，不看 Host 头', () => {
+  const ui = readFileSync(join(root, 'lib/ui.mjs'), 'utf8');
+  assert.ok(/req\.socket\?\.remoteAddress/.test(ui), '要用 TCP 对端地址');
+  const fn = ui.slice(ui.indexOf('function isLoopback'), ui.indexOf('function trusted'));
+  assert.ok(fn.indexOf('remoteAddress') < fn.indexOf('headers?.host'), '先看远端地址');
+});
+
+test('qq_meme_send 读账本内层的 messageId，且不再谎报成功', () => {
+  const tools = readFileSync(join(root, 'lib/tools.mjs'), 'utf8');
+  assert.ok(/entryRecord\?\.result/.test(tools), '要读 .result');
+  assert.ok(!/messageId: result\.messageId/.test(tools), '不能直接读外层 messageId');
+  assert.ok(/status === 'sent' \? 'sent'/.test(tools), '状态要跟账本一致');
+});
+
+test('自动配表情真的有读取点', () => {
+  const rt = readFileSync(join(root, 'lib/runtime.mjs'), 'utf8');
+  assert.ok(/sendAutoMeme\(/.test(rt), '要有发送函数');
+  assert.ok(/cfg\.autoSend !== true/.test(rt), '开关要真的读 config.memes.autoSend');
+  // 在「标记已处理」之后调用即可：两个都是 reply 里的收尾动作。
+  const markAt = rt.indexOf('record.lastMessageId = message.messageId;');
+  const autoAt = rt.indexOf('this.sendAutoMeme(message, output, signal)');
+  assert.ok(autoAt > markAt, '要在回复发出之后才配表情（autoAt=' + autoAt + ' markAt=' + markAt + '）');
+});
+
+test('启动失败不会让面板消失，而且能就地重试', () => {
+  const index = readFileSync(join(root, 'index.mjs'), 'utf8');
+  const ui = readFileSync(join(root, 'lib/ui.mjs'), 'utf8');
+  const client = readFileSync(join(root, 'lib/client.js'), 'utf8');
+  // 裸 await start() 会把异常冒到宿主，整个 entry 记成 failed，面板彻底消失 ——
+  // 用户连「去哪改配置」都看不到。
+  assert.ok(/try \{\s*await start\(\);/.test(index), 'apply() 里要包住 start()');
+  assert.ok(/runtime\.bootError = message/.test(index), '启动失败原因要挂到 runtime 上');
+  assert.ok(/register\(`\$\{PREFIX\}\/retry`/.test(ui), '要有 /retry 端点');
+  assert.ok(/const retryBoot = /.test(client), '面板要有重试按钮的处理函数');
+  // 重试必须能把上次的失败状态清干净，否则会撞上重复注册的工具。
+  assert.ok(/disposers\.reverse\(\)\.forEach/.test(index) || /for \(const dispose of disposers\.reverse\(\)\)/.test(index), '重试前要回收上一轮注册');
+  assert.ok(/started = null;/.test(index), '失败后要清掉 started，否则重试直接返回旧的失败 Promise');
+});
+
+test('NapCat 安装进度对外可见，且回调被节流', () => {
+  const nap = readFileSync(join(root, 'lib/napcat.mjs'), 'utf8');
+  // 只有一个「安装中」的话，118 MB 要下几分钟，用户没法判断是慢还是死了。
+  assert.ok(/#noteProgress\(/.test(nap), '要有写进度的私有方法');
+  assert.ok(/progress: \{/.test(nap) && /\.\.\.this\.progress/.test(nap), 'publicStatus 要带 progress，面板才读得到');
+  // 没有百分比的阶段靠这个证明「还活着」。
+  assert.ok(/elapsedMs/.test(nap), '进度要带已等待时长');
+  // 四个阶段：下载安装 → 启动进程 → 等扫码 → 已连接。
+  for (const stage of ['install', 'spawn', 'login', 'ready']) {
+    assert.ok(nap.includes(`#noteProgress('${stage}'`), `缺少 ${stage} 阶段`);
+  }
+  // 每收到一个 chunk 就写一次会抖，必须节流。
+  assert.ok(/lastTick/.test(nap) && /200/.test(nap), '进度回调要节流');
+  // installer 必须真的收到 progress 回调，否则下载过程完全不可见。
+  assert.ok(/progress: onProgress/.test(nap), 'installer 要拿到 progress 回调');
+});
+
+test('上游清空 Releases 后仍能下载：候选地址按顺序试', () => {
+  const inst = readFileSync(join(root, 'lib/napcat-install.mjs'), 'utf8');
+  // NapNeko/NapCatQQ 在 2026-11-12 删光了 release，只留一句 Ending。
+  // 写死单个地址等于新用户永远装不上，必须有备用地址。
+  assert.ok(/MIRROR_URLS/.test(inst), '要有镜像地址列表');
+  assert.ok(/urls:\s*Object\.freeze/.test(inst), 'NAP CAT_RELEASE 要带候选地址列表');
+  assert.ok(/for \(const origin of candidates\)/.test(inst), '要按顺序试');
+  assert.ok(/试过 \$\{candidates\.length\} 个地址/.test(inst), '全失败时要说清试过几个');
+  // 每换一个地址前要清掉半截文件，否则下一次写 flags:'wx' 会直接失败。
+  assert.ok(/await rm\(path, \{ force: true \}\)/.test(inst), '换地址前要清理半截文件');
+});
+
+test('卡在下载前超过一分钟会给出下载地址和落地目录', () => {
+  const nap = readFileSync(join(root, 'lib/napcat.mjs'), 'utf8');
+  const client = readFileSync(join(root, 'lib/client.js'), 'utf8');
+  // 网络连不上 GitHub 时，光显示「进行中」等于让用户干等。
+  assert.ok(/manualDownload\(\)/.test(nap), 'napcat 要提供手动下载信息');
+  for (const field of ['url', 'fileName', 'directory', 'bytes', 'sha256']) {
+    assert.ok(nap.includes(field + ':'), 'manualDownload 要含 ' + field);
+  }
+  assert.ok(/manualDownload: this\.manualDownload\(\)/.test(nap), 'publicStatus 要带出去');
+  assert.ok(/function ManualDownloadHint\(/.test(client), '面板要有手动下载卡片');
+  assert.ok(/> 60_000/.test(client), '阈值是一分钟');
+  // 一旦开始下载（有 received）就不该再提示手动下载。
+  assert.ok(/liveProgress\.received > 0/.test(client), '已在下载时不再提示');
+});
+
+test('进度条能算出速度和剩余时间', () => {
+  const client = readFileSync(join(root, 'lib/client.js'), 'utf8');
+  // 下载 118 MB 时用户最想知道「还要多久」，不是「已经下了多少」。
+  assert.ok(/function formatDuration\(/.test(client), '要有剩余时间格式化');
+  assert.ok(/\/s/.test(client), '要显示速度');
+  // 样本窗口别太长，否则网速变了估算跟不上。
+  assert.ok(/10_000/.test(client), '速度只用最近 10 秒的样本');
+});
+
+test('未连接时的轮询只刷状态，不碰表单', () => {
+  const client = readFileSync(join(root, 'lib/client.js'), 'utf8');
+  // 轮询如果走完整 load()，每 3 秒 setForm 一次，用户根本没法编辑。
+  assert.ok(/stateOnly/.test(client), 'load 要支持只刷状态');
+  assert.ok(/if \(stateOnly\) return;/.test(client), 'stateOnly 时要提前返回，跳过 setForm');
+  assert.ok(/stateOnly: true/.test(client), '轮询要传 stateOnly');
+  // 有下载进度时刷新要快一点，百分比才看得出在动。
+  assert.ok(/fast \? 1000 : 3000/.test(client), '下载阶段 1 秒、其余 3 秒');
+});
+
+test('面板画进度条：首次配置屏和主界面都有', () => {
+  const client = readFileSync(join(root, 'lib/client.js'), 'utf8');
+  // 两处渲染共用同一个组件，避免两边画得不一样。
+  assert.ok(/function ProgressBar\(/.test(client), '要有统一的进度条组件');
+  const bars = (client.match(/h\(ProgressBar, \{ p: bootProgress \}\)/g) ?? []).length;
+  assert.equal(bars, 2, '首次配置屏和主界面都要画，实际 ' + bars + ' 处');
+  assert.ok(/function formatBytes\(/.test(client), '要能把字节数写成 MB');
+  assert.ok(/function progressDetail\(/.test(client), '要显示已下载/总字节');
+  assert.ok(/function progressEta\(/.test(client), '要显示速度和剩余时间');
+  assert.ok(/qqa-indeterminate/.test(client), '没有 total 时要有不确定态动画');
+  assert.ok(/state\.napcat/.test(client), '进度来自 /state 的 napcat 段');
+});
+
+test('面板能开关念头，且会提交到配置', () => {
+  const client = readFileSync(join(root, 'lib/client.js'), 'utf8');
+  assert.ok(/thEnabled: data\.config\.thoughts\?\.enabled !== false/.test(client), 'load 要读这个字段');
+  assert.ok(/thoughts: \{/.test(client), 'save 要提交 thoughts 段');
+  assert.ok(/maxAgeHours: Math\.round\(Math\.min\(720, Math\.max\(1/.test(client), '小时数要钳到 1–720');
+  const ui = readFileSync(join(root, 'lib/ui.mjs'), 'utf8');
+  assert.ok(/thoughts: \['enabled', 'inject', 'limit', 'maxAgeHours'\]/.test(ui), 'PATCHABLE 要含 thoughts 段');
+  assert.ok(/PREFIX\}\/thoughts`/.test(ui), '要有 /thoughts 只读端点');
+});
+
+test('面板能调上下文条数，且会提交到配置', () => {
+  const client = readFileSync(join(root, 'lib/client.js'), 'utf8');
+  assert.ok(/lifeContextMessages: data\.config\.life\?\.proactiveContextMessages \?\? 8/.test(client), 'load 要读这个字段');
+  assert.ok(/proactiveContextMessages: Math\.round\(Math\.min\(30, Math\.max\(0/.test(client), '提交时钳到 0–30');
+  const ui = readFileSync(join(root, 'lib/ui.mjs'), 'utf8');
+  assert.ok(/life: \[[^\]]*'proactiveContextMessages'/.test(ui), 'PATCHABLE.life 要含 proactiveContextMessages');
+});
+/**
+ * 删临时目录，失败就重试几次。
+ *
+ * 这些测试造的是真实文件，而 VirtualLife / MemoryStore 的落盘是排队进行的：
+ * rm 可能正好撞上还没写完的临时文件，拿到 ENOTEMPTY 而不是安静通过。
+ * 那是测试的竞态，不是被测代码的 bug —— 用重试把它消掉。
+ */
+async function removeTempDir(dir, rm) {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    try { await rm(dir, { recursive: true, force: true }); return; }
+    catch (error) {
+      if (attempt === 5) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1)));
+    }
+  }
+}
 function fakeRes() {
   return {
     status: 0, headers: null, body: '',

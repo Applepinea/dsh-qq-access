@@ -11,7 +11,7 @@
 <p align="center">
   <a href="https://github.com/Applepinea/dsh-qq-access/releases"><img src="https://img.shields.io/github/v/release/Applepinea/dsh-qq-access?style=flat-square&color=blue" alt="GitHub Release"></a>
   <a href="https://www.npmjs.com/package/dsh-qq-access"><img src="https://img.shields.io/npm/v/dsh-qq-access?style=flat-square&color=cb3837" alt="npm version"></a>
-  <a href="https://github.com/Applepinea/dsh-qq-access/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Applepinea/dsh-qq-access/ci.yml?style=flat-square&label=CI" alt="CI"></a>
+  <a href="https://github.com/Applepinea/dsh-qq-access/actions"><img src="https://img.shields.io/github/actions/workflow/status/Applepinea/dsh-qq-access/ci.yml?style=flat-square&label=CI" alt="CI"></a>
   <a href="https://github.com/Applepinea/dsh-qq-access/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Applepinea/dsh-qq-access?style=flat-square" alt="License"></a>
   <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-%3E%3D22.14-green?style=flat-square&logo=node.js" alt="Node.js"></a>
 </p>
@@ -39,7 +39,7 @@
 
 **核心设计理念：让 AI 不只是能够回复消息，还能拥有持续的上下文、关系和生活状态。**
 
-## 🚀 功能特性 {#功能特性}
+## 🚀 功能特性
 
 ### 💬 QQ 消息与群聊
 
@@ -66,6 +66,7 @@
 | 亲密度 | 根据互动逐步发展关系 |
 | 关系阶段 | 支持初识、深化、承诺、共生等阶段演进 |
 | 时间感知 | 为历史消息附加相对时间和对话间隔 |
+| 念头留存 | 模型「想过但没说出口」的内容单独落盘，会话被回收或插件重启后会重新注入 |
 
 ### 🌱 虚拟生活系统
 
@@ -108,7 +109,7 @@ Windows x64 用户可以使用插件内置的 NapCat 托管功能：
 
 ---
 
-## 📦 快速开始 {#快速开始}
+## 📦 快速开始
 
 ### 环境要求
 
@@ -117,7 +118,21 @@ Windows x64 用户可以使用插件内置的 NapCat 托管功能：
 | DeepSeek Harness | `>= 0.2.1-rc.3` |
 | Node.js | `>= 22.14.0` |
 | 操作系统 | Windows / Linux / macOS |
+| **QQ 客户端** | **不需要预先安装** |
 | NapCat | 托管模式仅支持 Windows x64；其他环境使用外部模式 |
+
+> **上游已于 2026-11-12 停止维护**（`NapNeko/NapCatQQ` 清空了全部 Releases，README 只剩一句 "Ending"）。
+> 插件默认从社区镜像下载同一份产物，SHA256 校验值不变；若镜像也失效，面板会在一分钟后给出手动下载指引。
+>
+> **不需要先装 QQ。** 托管模式下载的是 NapCat 的 **Shell 版**运行包（约 118 MB），
+> 里面自带 `node.exe`、`wrapper.node`（QQNT 运行时）和一份用于描述 QQ 版本的 `package.json`，
+> 插件启动的是该目录下的 `node.exe`，不会去读你系统里装没装 QQ，也不会与之冲突。
+> 装了 QQ 也可以，两者版本互不影响（例如本机 QQ 是 9.9.36，NapCat Shell 用的是 9.9.31）。
+>
+> 登录仍然需要**手机 QQ 扫码**——NapCat 是协议实现而非客户端，扫码这一步绕不过去。
+>
+> 托管模式**仅支持 Windows x64**。macOS / Linux / ARM 请在 `napcat.mode` 里选 `external`，
+> 自行部署 NapCat 后把 OneBot 地址填进来；`external` 模式不需要 QQ 客户端。
 
 ### 方式一：从 npm 安装（推荐）
 
@@ -148,7 +163,7 @@ dsh plugin --profile desktop add dsh-qq-access
 连不上 npm 时用这种方式。
 
 1. 前往 [GitHub Releases](https://github.com/Applepinea/dsh-qq-access/releases/latest)，下载 `dsh-qq-access.tgz`。
-   同一个 Release 里还有个带版本号的 `dsh-qq-access-1.1.4.tgz`，两个文件内容完全一致，下哪个都行。
+   同一个 Release 里还有个带版本号的 `dsh-qq-access-1.1.4514.tgz`，两个文件内容完全一致，下哪个都行。
 2. 用下载后的完整路径安装（PowerShell 里路径带空格要加引号）：
 
 ```powershell
@@ -166,7 +181,7 @@ dsh plugin --profile desktop add "$env:USERPROFILE\Downloads\dsh-qq-access.tgz"
 1. 填 **登录用 QQ 号**（要拿来当机器人的那个号）。
 2. 选填 **管理员 QQ 号**（你自己的号，用于远程管理；留空表示只在本机 Harness 里管理）。
 3. 点 **生成配置**。Token、事件签名密钥、NapCat WebUI token、三个端口全部由插件随机生成，你不用自己编。
-4. 重载插件（在宿主里禁用再启用一次，或重启 Harness）。托管模式下插件会自动准备 NapCat 并打开扫码页，用第 1 步填的号扫码即可。
+4. 生成配置后会自动开始准备 NapCat（首次下载约 118 MB，需要几分钟），装好后自动打开扫码页，用第 1 步填的号扫码即可。面板顶部会显示下载/启动进度，不用手动重载插件。
 
 配置文件默认落在：
 
@@ -174,7 +189,7 @@ dsh plugin --profile desktop add "$env:USERPROFILE\Downloads\dsh-qq-access.tgz"
 %USERPROFILE%\.dsh-qq-access\config.json
 ```
 
-> 生成配置之后面板上的其它设置才会生效——在那之前插件只挂了面板，QQ 接入没有启动（面板会提示这一点）。
+> 点「生成配置」的瞬间 QQ 接入就会启动。首次要下载 NapCat，面板顶部会依次显示 安装中 → 启动中 → 等待扫码 → 在线，全程不用离开面板。
 
 **进阶：用命令行向导。**
 
@@ -216,7 +231,7 @@ Copy-Item examples/config.example.json "$env:USERPROFILE\.dsh-qq-access\config.j
 
 ---
 
-## ⚙️ 配置指南 {#配置指南}
+## ⚙️ 配置指南
 
 大部分配置都可以直接在 Harness 左侧栏的 **QQ 接入** 面板中修改。
 
@@ -277,10 +292,17 @@ Copy-Item examples/config.example.json "$env:USERPROFILE\.dsh-qq-access\config.j
 
 由插件负责 NapCat 的安装、启动、登录页面和运行状态管理。
 
+首次启动时会自动下载 NapCat Shell 运行包（约 118 MB，带 SHA256 校验），
+解压到数据目录并拉起其中的 `node.exe`。整个过程在面板上有进度条：
+安装中（带百分比）→ 启动中 → 等待扫码 → 已连接。
+
+**不需要预先安装 QQ 客户端**，也不会读取或干扰系统里的 QQ。
+
 适合：
 
 - Windows x64 用户。
 - 没有单独部署 NapCat 的用户。
+- 没装 QQ 客户端、或不想让插件碰到自己 QQ 的用户。
 - 希望尽可能减少手动配置的用户。
 
 ### External Mode（外部模式）
@@ -301,7 +323,7 @@ Copy-Item examples/config.example.json "$env:USERPROFILE\.dsh-qq-access\config.j
 
 ---
 
-## 🔐 安全机制 {#安全机制}
+## 🔐 安全机制
 
 QQ 接入意味着插件能够代表你的 QQ 账号执行操作，因此安全性是项目的重要设计目标。
 
@@ -355,11 +377,23 @@ node cli.mjs doctor
 
 不同版本和运行状态下，日志位置可能有所不同。
 
+#### 常见报错
+
+| 报错 | 原因 | 处理 |
+| --- | --- | --- |
+| `webserver: duplicate exact route "/dsh-qq/api/state"` | 同一 profile 里装了两份 `dsh-qq-access`（重复安装，或上次热卸载没干净） | 打开 `%USERPROFILE%\.dsh\profiles\desktop\package.json`，确认 `dsh.profile.bundles` 里 `dsh-qq-access` 只出现一次；删掉重复项后完全退出 Harness（含托盘）再启动 |
+| `QQ API 端口已被其他服务占用` | 3000 / 6099 端口被别的程序占了 | 改 `onebot.apiUrl` 或 `napcat.webuiPort`，或先关掉占用的程序 |
+| `等待 QQ 扫码登录超时` | 没在时限内扫码 | 面板上点「打开登录页」重扫，或 `node cli.mjs napcat-login` |
+| `NapCat 下载服务器返回的文件大小不符` | 下载被代理/镜像改写了 | 换个网络重试，或用 `node cli.mjs napcat-install --archive <路径>` 手动指定官方压缩包 |
+| 下载一直不开始（超过一分钟） | 连不上 GitHub / 代理有问题 | 面板会自动展开手动下载卡片：复制下载地址 → 下载 → 按卡片给出的文件名放进 `napcat\downloads\` → 点「重试启动」 |
+| `NapCat 登录账号与配置 selfId 不一致` | 扫码用的号和面板里填的登录号不是同一个 | 确认后改配置；面板顶部有「重试启动」，不用重启 Harness |
+| 启动失败后改好了配置 | 之前只能重启 Harness | 面板顶部红字下方点「重试启动」即可 |
+
 如果需要提交日志用于排查，请先删除二维码、登录密钥、Cookie、Token 等敏感内容。
 
 ---
 
-## 🧪 开发与测试 {#开发与测试}
+## 🧪 开发与测试
 
 克隆项目：
 
@@ -416,7 +450,7 @@ npm pack --dry-run
 
 ---
 
-## 📚 文档 {#文档}
+## 📚 文档
 
 | 文档 | 内容 |
 | --- | --- |
