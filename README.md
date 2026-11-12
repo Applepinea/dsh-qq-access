@@ -11,7 +11,7 @@
 <p align="center">
   <a href="https://github.com/Applepinea/dsh-qq-access/releases"><img src="https://img.shields.io/github/v/release/Applepinea/dsh-qq-access?style=flat-square&color=blue" alt="GitHub Release"></a>
   <a href="https://www.npmjs.com/package/dsh-qq-access"><img src="https://img.shields.io/npm/v/dsh-qq-access?style=flat-square&color=cb3837" alt="npm version"></a>
-  <a href="https://github.com/Applepinea/dsh-qq-access/actions"><img src="https://img.shields.io/github/actions/workflow/status/Applepinea/dsh-qq-access/ci.yml?style=flat-square&label=CI" alt="CI"></a>
+  <a href="https://github.com/Applepinea/dsh-qq-access/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Applepinea/dsh-qq-access/ci.yml?style=flat-square&label=CI" alt="CI"></a>
   <a href="https://github.com/Applepinea/dsh-qq-access/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Applepinea/dsh-qq-access?style=flat-square" alt="License"></a>
   <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-%3E%3D22.14-green?style=flat-square&logo=node.js" alt="Node.js"></a>
 </p>
@@ -39,7 +39,7 @@
 
 **核心设计理念：让 AI 不只是能够回复消息，还能拥有持续的上下文、关系和生活状态。**
 
-## 🚀 功能特性
+## 🚀 功能特性 {#功能特性}
 
 ### 💬 QQ 消息与群聊
 
@@ -108,7 +108,7 @@ Windows x64 用户可以使用插件内置的 NapCat 托管功能：
 
 ---
 
-## 📦 快速开始
+## 📦 快速开始 {#快速开始}
 
 ### 环境要求
 
@@ -216,7 +216,7 @@ Copy-Item examples/config.example.json "$env:USERPROFILE\.dsh-qq-access\config.j
 
 ---
 
-## ⚙️ 配置指南
+## ⚙️ 配置指南 {#配置指南}
 
 大部分配置都可以直接在 Harness 左侧栏的 **QQ 接入** 面板中修改。
 
@@ -301,7 +301,7 @@ Copy-Item examples/config.example.json "$env:USERPROFILE\.dsh-qq-access\config.j
 
 ---
 
-## 🔐 安全机制
+## 🔐 安全机制 {#安全机制}
 
 QQ 接入意味着插件能够代表你的 QQ 账号执行操作，因此安全性是项目的重要设计目标。
 
@@ -359,7 +359,7 @@ node cli.mjs doctor
 
 ---
 
-## 🧪 开发与测试
+## 🧪 开发与测试 {#开发与测试}
 
 克隆项目：
 
@@ -416,7 +416,7 @@ npm pack --dry-run
 
 ---
 
-## 📚 文档
+## 📚 文档 {#文档}
 
 | 文档 | 内容 |
 | --- | --- |
