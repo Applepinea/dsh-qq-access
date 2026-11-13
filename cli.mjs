@@ -9,7 +9,7 @@ import { bootstrapConfig, loadConfig, defaultConfigPath, normalizeConfig } from 
 import { OneBotClient } from './lib/onebot.mjs';
 import { assert, qqId } from './lib/util.mjs';
 import { NAPCAT_RELEASE, installNapcat, inspectInstallation } from './lib/napcat-install.mjs';
-import { NapcatManager, loginUrl, openLoginBrowser } from './lib/napcat.mjs';
+import {NapcatManager, loginUrl, openLoginBrowser, portAvailable } from './lib/napcat.mjs';
 
 const argv = process.argv.slice(2);
 const command = argv[0] ?? 'help';
@@ -62,6 +62,16 @@ async function doctor() {
       result.endpoints[action] = { ok: true, ...(Array.isArray(data) ? { count: data.length } : {}) };
     } catch (error) { result.endpoints[action] = { ok: false, error: error.message }; }
   }
+  // 事件端口：docs/EXTERNAL_MODE.md 写着 doctor 会检查，但实现里一直没有。
+  // 端口被占用时插件启动会失败，而这里是最容易提前发现的地方。
+  try {
+    const free = await portAvailable(config.events.port);
+    result.eventsPort = free
+      ? { port: config.events.port, ok: true }
+      : { port: config.events.port, ok: false, error: '端口已被占用；插件将无法接收消息上报' };
+  } catch (error) {
+    result.eventsPort = { port: config.events.port, ok: false, error: String(error?.message ?? error) };
+  }
   if (config.qzone.enabled) {
     // QQ 空间走 NapCat 的 cookie，不需要浏览器；只检查 cookie 能否取到。
     try {
@@ -80,10 +90,18 @@ async function enableManaged() {
   assert(process.platform === 'win32' && process.arch === 'x64', '托管模式当前支持 Windows x64');
   const raw = JSON.parse(await readFile(configPath, 'utf8'));
   raw.napcat = { ...raw.napcat, mode: 'managed', webuiToken: raw.napcat?.webuiToken || randomBytes(24).toString('hex') };
-  normalizeConfig(raw, configPath);
+  // 只调 normalizeConfig 而不使用它的结果：写回磁盘的仍是原来的 raw，
+  // 缺省字段（例如 napcat.webuiPort / loginGraceMs）不会被补进文件。
+  // 真正写回的是规范化后的值。
+  const normalized = normalizeConfig(raw, configPath);
   // Preserve old credentials, personas, allowlists and all unrelated settings.
   await writeFile(configPath + `.before-managed-${Date.now()}.json`, await readFile(configPath), { flag: 'wx', mode: 0o600 });
-  await writeFile(configPath, JSON.stringify(raw, null, 2) + '\n', { mode: 0o600 });
+  const persisted = {
+    ...normalized,
+    napcat: { ...normalized.napcat, mode: 'managed' },
+  };
+  delete persisted.configPath;
+  await writeFile(configPath, JSON.stringify(persisted, null, 2) + '\n', { mode: 0o600 });
   console.log('已保留原配置并启用 NapCat 托管模式。');
   await installCommand();
 }

@@ -66,7 +66,6 @@
 | 亲密度 | 根据互动逐步发展关系 |
 | 关系阶段 | 支持初识、深化、承诺、共生等阶段演进 |
 | 时间感知 | 为历史消息附加相对时间和对话间隔 |
-| 念头留存 | 模型「想过但没说出口」的内容单独落盘，会话被回收或插件重启后会重新注入 |
 
 ### 🌱 虚拟生活系统
 
@@ -118,21 +117,7 @@ Windows x64 用户可以使用插件内置的 NapCat 托管功能：
 | DeepSeek Harness | `>= 0.2.1-rc.3` |
 | Node.js | `>= 22.14.0` |
 | 操作系统 | Windows / Linux / macOS |
-| **QQ 客户端** | **不需要预先安装** |
 | NapCat | 托管模式仅支持 Windows x64；其他环境使用外部模式 |
-
-> **上游已于 2026-11-12 停止维护**（`NapNeko/NapCatQQ` 清空了全部 Releases，README 只剩一句 "Ending"）。
-> 插件默认从社区镜像下载同一份产物，SHA256 校验值不变；若镜像也失效，面板会在一分钟后给出手动下载指引。
->
-> **不需要先装 QQ。** 托管模式下载的是 NapCat 的 **Shell 版**运行包（约 118 MB），
-> 里面自带 `node.exe`、`wrapper.node`（QQNT 运行时）和一份用于描述 QQ 版本的 `package.json`，
-> 插件启动的是该目录下的 `node.exe`，不会去读你系统里装没装 QQ，也不会与之冲突。
-> 装了 QQ 也可以，两者版本互不影响（例如本机 QQ 是 9.9.36，NapCat Shell 用的是 9.9.31）。
->
-> 登录仍然需要**手机 QQ 扫码**——NapCat 是协议实现而非客户端，扫码这一步绕不过去。
->
-> 托管模式**仅支持 Windows x64**。macOS / Linux / ARM 请在 `napcat.mode` 里选 `external`，
-> 自行部署 NapCat 后把 OneBot 地址填进来；`external` 模式不需要 QQ 客户端。
 
 ### 方式一：从 npm 安装（推荐）
 
@@ -163,7 +148,7 @@ dsh plugin --profile desktop add dsh-qq-access
 连不上 npm 时用这种方式。
 
 1. 前往 [GitHub Releases](https://github.com/Applepinea/dsh-qq-access/releases/latest)，下载 `dsh-qq-access.tgz`。
-   同一个 Release 里还有个带版本号的 `dsh-qq-access-1.1.4514.tgz`，两个文件内容完全一致，下哪个都行。
+   同一个 Release 里还有个带版本号的 `dsh-qq-access-1.1.4.tgz`，两个文件内容完全一致，下哪个都行。
 2. 用下载后的完整路径安装（PowerShell 里路径带空格要加引号）：
 
 ```powershell
@@ -174,41 +159,278 @@ dsh plugin --profile desktop add "$env:USERPROFILE\Downloads\dsh-qq-access.tgz"
 
 ### 首次配置
 
-**推荐：直接在面板里完成。**
+整个过程分**两个阶段**，中间需要重启一次 DSH。请按顺序做完，不要跳步。
 
-装好插件、重启 Harness 后点开左侧栏的 **QQ 接入**。这时还没有配置文件，面板会显示「首次配置」那一屏：
+#### 阶段 1：生成配置（约 30 秒）
 
-1. 填 **登录用 QQ 号**（要拿来当机器人的那个号）。
-2. 选填 **管理员 QQ 号**（你自己的号，用于远程管理；留空表示只在本机 Harness 里管理）。
-3. 点 **生成配置**。Token、事件签名密钥、NapCat WebUI token、三个端口全部由插件随机生成，你不用自己编。
-4. 生成配置后会自动开始准备 NapCat（首次下载约 118 MB，需要几分钟），装好后自动打开扫码页，用第 1 步填的号扫码即可。面板顶部会显示下载/启动进度，不用手动重载插件。
+1. 装好插件，**重启一次 DSH**。左侧栏会出现 **QQ 接入**。
+2. 点开它 —— 还没配置文件时，面板显示「首次配置」那一屏。
+3. **不用填登录 QQ 号。** 只选填 **管理员 QQ 号**（你自己的号，用于用另一个 QQ 私聊管理插件；留空就只能在本机 Harness 里管）。
+4. 点 **生成配置并开始登录**。
 
-配置文件默认落在：
+> 这一步**只写配置文件**，不会下载任何东西。面板会明确提示你重启。
+
+配置文件落在：
 
 ```text
 %USERPROFILE%\.dsh-qq-access\config.json
 ```
 
-> 点「生成配置」的瞬间 QQ 接入就会启动。首次要下载 NapCat，面板顶部会依次显示 安装中 → 启动中 → 等待扫码 → 在线，全程不用离开面板。
+Token、事件签名密钥、NapCat WebUI token、三个端口全部由插件随机生成，你不用自己编。
 
-**进阶：用命令行向导。**
+此时配置里是 `"selfId": ""` + `"loginPending": true` —— 意思是「还不知道要登哪个号，等扫码后自动识别」。
 
-适合脚本化部署，或面板打不开的时候。**必须先进到插件目录**再执行，`cli.mjs` 是插件自带的脚本：
+#### 阶段 2：拉起 NapCat 并扫码（首次约 3–8 分钟，取决于网速）
+
+1. **完全退出 DSH**：托盘图标右键 → 退出。不要只关窗口。
+2. 重新打开 DSH。插件这次会读到配置，开始干活：
+   - 检查/下载 NapCat 运行包（首次约 **118 MB**，面板显示百分比进度条）
+   - 解压校验
+   - 启动 NapCat 并打开扫码页
+3. **用手机 QQ 扫码**，在手机上点确认登录。
+4. 插件从 NapCat 的配置文件名认出你登录的是哪个号，写回 `config.json`，面板整屏提示：
+
+```text
+✅ 已登录 QQ 123456789，配置已写回。
+现在请完全退出 DeepSeek Harness，再重新启动 —— QQ 接入才会真正开始工作。
+```
+
+5. **再退出并重启一次 DSH。** 这次插件以 `selfId=123456789` 启动，走 NapCat 的快速登录，不会再扫码。
+
+到此完成，面板会变成正常配置界面，`qq_status` 显示已连接。
+
+#### 为什么要重启两次
+
+| 时机 | 为什么必须重启 |
+| --- | --- |
+| 生成配置后 | `/bootstrap` 只写文件，不启动 NapCat。下载和扫码都发生在下一次 `apply()` 里 |
+| 扫码成功后 | 运行中的插件启动时读到的 `selfId` 还是空的；只有重启才会以真实号重新初始化 |
+
+---
+
+### ⚠️ NapCat 的 WebUI 只在后台启动
+
+**这是最容易困惑的一点，先说清楚。**
+
+插件是用 `windowsHide: true` 启动 NapCat 的：
+
+```js
+spawnProcess(node.exe, [index.js, '-q', selfId], {
+  windowsHide: true,   // ← 没有可见窗口
+  stdio: ['ignore', 'pipe', 'pipe'],
+});
+```
+
+所以：
+
+- **不会弹出任何 NapCat 窗口**。任务管理器里只有一个 `node.exe`。
+- **WebUI 只能通过浏览器访问**，地址是你配置里的 `napcat.webuiPort`（默认 `6800`）：
+
+  ```text
+  http://127.0.0.1:6800/webui?token=<你的 napcat.webuiToken>
+  ```
+
+  面板顶部和「打开扫码页」按钮会自动带上 token，点一下就能进。
+
+- **想让 WebUI 在系统托盘里常驻**，需要你自己改 NapCat 的启动方式 —— 见下面「自己接管 NapCat」。
+
+#### 方案 0（先看这个）：让 WebUI 不再每次启动都弹
+
+**默认行为**：插件在「判断需要登录」时会自动打开浏览器给你扫码。
+如果 NapCat 冷启动要几秒，这几秒里插件连不上，就可能误判成「需要登录」，
+于是**每次开机都被弹一个 WebUI 窗口** —— 哪怕你账号好好的、根本不用扫码。
+
+想彻底不再弹，两个办法（都在面板「NapCat」卡片里改，保存后重启 DSH 生效）：
+
+**办法 1：直接关掉自动打开（最省事）**
+
+把 **「需要登录时自动打开 WebUI 浏览器」** 关掉。
+以后要扫码就手动点「打开 NapCat 登录页」按钮，其余时候安静如鸡。
+
+```json
+{ "napcat": { "autoOpenLogin": false } }
+```
+
+**办法 2：留着自动打开，但给足冷启动时间（更聪明）**
+
+保持开关打开，把 **「启动宽限期」**（`loginGraceMs`）调大，默认 **20 秒**。
+NapCat 冷启动那几秒连不上是正常的，宽限期内**不会**弹；
+只有过了宽限期还连不上、确实需要扫码了，才弹**一次**。
+
+```json
+{ "napcat": { "autoOpenLogin": true, "loginGraceMs": 20000 } }
+```
+
+| 配置项 | 默认值 | 说明 |
+| --- | --- | --- |
+| `napcat.autoOpenLogin` | `true` | 需要登录时是否自动打开浏览器。关掉 = 永不弹窗 |
+| `napcat.loginGraceMs` | `20000` | 冷启动宽限期（毫秒）。这段时间内连不上不算「需要登录」，不会弹窗 |
+
+> 首次配置（`selfId` 为空）不受宽限期限制 —— 那时确实要立刻扫码。
+
+---
+#### 方案 A（推荐）：托管模式 + 面板按钮
+
+什么都不用配。插件负责启动/停止 NapCat，你只通过面板的 **打开扫码页** 按钮进 WebUI。
+
+要看 WebUI 地址和 token：
+
+```powershell
+node -e "const c=require(process.env.USERPROFILE+'/.dsh-qq-access/config.json');console.log('http://127.0.0.1:'+c.napcat.webuiPort+'/webui?token='+c.napcat.webuiToken)"
+```
+
+#### 方案 B：让 NapCat 独立后台常驻（有托盘 / 开机自启 / 不随 DSH 退出）
+
+这是你要的「后台启动 NapCat」的完整做法。**核心是把模式改成外部** ——
+外部模式下插件完全不碰 NapCat 进程，只管连它的 OneBot 接口。
+
+> 为什么必须改成外部：托管模式下插件用 `windowsHide` 拉 NapCat，**一定会隐藏窗口**，
+> 而且 DSH 退出时会把 NapCat 一起带走。外部模式下这两件事都由你控制。
+
+##### B1. 把 NapCat 模式改成外部
+
+面板里「NapCat 模式」选 **外部**，或者在 `config.json` 里改：
+
+```json
+{ "napcat": { "mode": "external" } }
+```
+
+改完重启 DSH。此时插件不再管理 NapCat，只等你把 NapCat 跑起来。
+
+##### B2. 手动启动 NapCat（三种方式，任选）
+
+运行包默认在：
+
+```text
+%USERPROFILE%\.dsh-qq-access\data\napcat\releases\v4.18.41\
+```
+
+这个目录里有现成的启动脚本 `napcat.bat`，内容就是：
+
+```bat
+@echo off
+cd /d "%~dp0"
+"%~dp0node.exe" "%~dp0index.js" %*
+```
+
+**方式 1：直接双击（最简单）**
+
+双击 `napcat.bat`。会弹出一个**黑色命令行窗口**——这个窗口就是 NapCat 本体，
+**别关它**，关了 NapCat 就退了。
+
+第一次会提示扫码（或在浏览器里完成），之后它会记住登录态。
+
+**方式 2：完全后台（不留窗口）**
+
+想要「启动了但看不到窗口」：
+
+```powershell
+$dir = "$env:USERPROFILE\.dsh-qq-access\data\napcat\releases\v4.18.41"
+Start-Process -FilePath "$dir\node.exe" `
+  -ArgumentList "$dir\index.js", "-q", "<你的QQ号>" `
+  -WorkingDirectory $dir -WindowStyle Hidden
+```
+
+`-WindowStyle Hidden` 就是隐藏窗口。想再彻底一点，用 `-RedirectStandardOutput`
+把日志写到文件，然后彻底没人看得见它在跑。
+
+**方式 3：开机自启（推荐长期用）**
+
+把方式 2 的那条命令存成 `.ps1`，然后丢进启动目录：
+
+```powershell
+$startup = [Environment]::GetFolderPath('Startup')
+notepad "$startup\napcat.ps1"   # 把上面的命令粘进去保存
+```
+
+或者用**任务计划程序**：创建任务 → 触发器「登录时」→ 操作「启动程序」→
+程序填 `node.exe` 的完整路径，参数填 `index.js -q <你的QQ号>`，起始位置填运行包目录，
+勾上「不管用户是否登录都要运行」+「使用最高权限运行」就能完全后台。
+
+##### B3. 在 NapCat 里配好 OneBot 连接
+
+外部模式下插件**不会**帮你写 NapCat 配置，需要你在 NapCat 的 WebUI 里手动加两个连接。
+
+NapCat 启动后会告诉你 WebUI 地址（看那个命令行窗口，或日志里搜 `WebUi User Panel Url`）。
+通常长这样：
+
+```text
+http://127.0.0.1:6099/webui?token=<NapCat 自己生成的 token>
+```
+
+进去之后在 **网络配置** 里加：
+
+**① HTTP 服务器**（插件从这里发消息）
+
+| 字段 | 值 |
+| --- | --- |
+| 主机 | `127.0.0.1` |
+| 端口 | `3000` |
+| Token | 你 `config.json` 里的 `onebot.token` |
+| 消息格式 | `array` |
+
+**② HTTP 客户端**（NapCat 把收到的消息推给插件）
+
+| 字段 | 值 |
+| --- | --- |
+| URL | `http://127.0.0.1:5701/onebot` |
+| Token | 你 `config.json` 里的 `events.secret` |
+| 消息格式 | `array` |
+
+两个 token 都能用这条命令读出来：
+
+```powershell
+node -e "const c=require(process.env.USERPROFILE+'/.dsh-qq-access/config.json');console.log('OneBot token :', c.onebot.token);console.log('事件 secret  :', c.events.secret);console.log('WebUI port   :', c.napcat.webuiPort)"
+```
+
+##### B4. 验证
+
+重启 DSH，然后看面板：
+
+- 状态显示 **在线** → 成功
+- 显示 **未连接** → 点面板的「刷新」；还不行就检查 NapCat 有没有在跑、token 对不对
+
+也可以在 QQ 里私聊她一句，能回就说明通了。
+
+##### B5. 这样做的代价
+
+| 项 | 托管模式 | 外部模式（自己跑） |
+| --- | --- | --- |
+| 谁启动 NapCat | 插件 | **你** |
+| NapCat 崩了 | 插件自动重启（最多 `maxRestarts` 次） | **要你自己重启** |
+| DSH 重启时 | NapCat 跟着重启，可能要重新扫码 | NapCat 继续跑，**不用重扫** |
+| 有没有窗口 | 没有（`windowsHide`） | 你决定 |
+| OneBot 配置 | 插件自动写 | 你手动配 |
+
+**外部模式最大的好处**：DSH 重启不会打断 NapCat，省掉反复扫码。
+**最大的坏处**：NapCat 出问题得你自己看。
+
+#### 方案 C：两者都要（托管但不隐藏窗口）
+
+目前不支持。插件为了不在用户桌面上乱弹窗口，固定用了 `windowsHide: true`。
+如果你需要这个，可以用方案 B 自己启动，然后在面板里保持「外部」模式。
+
+---
+
+### 进阶：用命令行向导
+
+适合脚本化部署，或面板打不开的时候。**必须先进到插件目录**再执行：
 
 ```powershell
 cd "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-qq-access"
 node cli.mjs setup
 ```
 
-向导会问同样的两个 QQ 号，生成随机 Token 与事件签名密钥。在 Windows x64 上默认使用 NapCat 托管模式。
+向导会问登录 QQ 号和管理员号，生成随机 Token 与事件签名密钥。在 Windows x64 上默认使用 NapCat 托管模式。
 
-**进阶：手写配置。**
+### 进阶：手写配置
 
 ```powershell
+cd "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\dsh-qq-access"
 Copy-Item examples/config.example.json "$env:USERPROFILE\.dsh-qq-access\config.json"
 ```
 
-同样要在插件目录下执行。至少需要确认：
+至少要确认这几项：
 
 ```json
 {
@@ -226,8 +448,7 @@ Copy-Item examples/config.example.json "$env:USERPROFILE\.dsh-qq-access\config.j
 
 `onebot.token` 和 `events.secret` 均应使用不少于 16 位的随机字符串。
 
-托管模式下，插件会自动将相关连接配置写入 NapCat，无需重复手动配置。
-
+托管模式下，插件会自动把连接配置写进 NapCat，无需重复手动配置。
 
 ---
 
@@ -244,7 +465,7 @@ Copy-Item examples/config.example.json "$env:USERPROFILE\.dsh-qq-access\config.j
 | `access.privateMode` | 私聊访问策略 |
 | `access.groupMode` | 群聊访问策略 |
 | `reply.private` | 是否自动回复私聊 |
-| `reply.group` | 群聊回复模式 |
+| `reply.group` | 群聊回复模式（默认 `off`） |
 | `reply.smartThreshold` | 智能群聊触发阈值 |
 | `reply.selfNames` | AI 在群聊中的名称 |
 | `reply.interests` | 感兴趣的话题 |
@@ -258,12 +479,12 @@ Copy-Item examples/config.example.json "$env:USERPROFILE\.dsh-qq-access\config.j
 
 | 模式 | 行为 |
 | --- | --- |
-| `off` | 不自动回复 |
+| `off` | **默认**。只归档，不自动回复 |
 | `mention` | 仅响应 @ 和相关主动提及 |
 | `smart` | 根据消息内容和兴趣判断是否回复 |
 | `all` | 尽可能响应群聊消息 |
 
-`smart` 是默认模式。
+`off` 是默认模式（群消息只归档不回）。要用智能回复，在面板里把「群聊回复」改成 `smart`。
 
 它会优先响应被 @、被引用或被叫名字的消息；其他消息则根据对话意图、兴趣词和内容特征进行评分。
 
@@ -292,17 +513,10 @@ Copy-Item examples/config.example.json "$env:USERPROFILE\.dsh-qq-access\config.j
 
 由插件负责 NapCat 的安装、启动、登录页面和运行状态管理。
 
-首次启动时会自动下载 NapCat Shell 运行包（约 118 MB，带 SHA256 校验），
-解压到数据目录并拉起其中的 `node.exe`。整个过程在面板上有进度条：
-安装中（带百分比）→ 启动中 → 等待扫码 → 已连接。
-
-**不需要预先安装 QQ 客户端**，也不会读取或干扰系统里的 QQ。
-
 适合：
 
 - Windows x64 用户。
 - 没有单独部署 NapCat 的用户。
-- 没装 QQ 客户端、或不想让插件碰到自己 QQ 的用户。
 - 希望尽可能减少手动配置的用户。
 
 ### External Mode（外部模式）
@@ -376,18 +590,6 @@ node cli.mjs doctor
 ```
 
 不同版本和运行状态下，日志位置可能有所不同。
-
-#### 常见报错
-
-| 报错 | 原因 | 处理 |
-| --- | --- | --- |
-| `webserver: duplicate exact route "/dsh-qq/api/state"` | 同一 profile 里装了两份 `dsh-qq-access`（重复安装，或上次热卸载没干净） | 打开 `%USERPROFILE%\.dsh\profiles\desktop\package.json`，确认 `dsh.profile.bundles` 里 `dsh-qq-access` 只出现一次；删掉重复项后完全退出 Harness（含托盘）再启动 |
-| `QQ API 端口已被其他服务占用` | 3000 / 6099 端口被别的程序占了 | 改 `onebot.apiUrl` 或 `napcat.webuiPort`，或先关掉占用的程序 |
-| `等待 QQ 扫码登录超时` | 没在时限内扫码 | 面板上点「打开登录页」重扫，或 `node cli.mjs napcat-login` |
-| `NapCat 下载服务器返回的文件大小不符` | 下载被代理/镜像改写了 | 换个网络重试，或用 `node cli.mjs napcat-install --archive <路径>` 手动指定官方压缩包 |
-| 下载一直不开始（超过一分钟） | 连不上 GitHub / 代理有问题 | 面板会自动展开手动下载卡片：复制下载地址 → 下载 → 按卡片给出的文件名放进 `napcat\downloads\` → 点「重试启动」 |
-| `NapCat 登录账号与配置 selfId 不一致` | 扫码用的号和面板里填的登录号不是同一个 | 确认后改配置；面板顶部有「重试启动」，不用重启 Harness |
-| 启动失败后改好了配置 | 之前只能重启 Harness | 面板顶部红字下方点「重试启动」即可 |
 
 如果需要提交日志用于排查，请先删除二维码、登录密钥、Cookie、Token 等敏感内容。
 

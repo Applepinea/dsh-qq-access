@@ -33,7 +33,7 @@
   },
   "reply": {
     "private": true,
-    "group": "smart",
+    "group": "off",
     "smartThreshold": 3,
     "selfNames": [],
     "interests": [],
@@ -91,12 +91,6 @@
     "useModel": false,
     "inject": true
   },
-  "thoughts": {
-    "enabled": true,
-    "inject": true,
-    "limit": 3,
-    "maxAgeHours": 48
-  },
   "life": {
     "enabled": true,
     "inject": true,
@@ -108,7 +102,6 @@
     "proactiveMinGapMinutes": 90,
     "proactiveJitterMinutes": 45,
     "proactiveGraceMinutes": 30,
-    "proactiveContextMessages": 8,
     "proactiveHint": "",
     "proactiveTargets": []
   },

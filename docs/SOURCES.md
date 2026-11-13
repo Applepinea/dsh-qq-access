@@ -24,7 +24,7 @@
 ## OneBot v11 / NapCat
 
 - [OneBot v11 标准](https://github.com/botuniverse/onebot-11)
-- [NapCatQQ](https://github.com/NapNeko/NapCatQQ)
+- [NapCatQQ](https://github.com/Applepinea/NapCatQQ)（上游 `NapNeko/NapCatQQ` 的 release 已删除，从 fork 下载同一份资产）
 
 用到的接口：
 
@@ -37,7 +37,7 @@
 | `get_group_msg_history` | 轮询补漏 |
 | `delete_msg` | 撤回自己发的消息 |
 
-NapCat 运行包固定为官方 `v4.18.41` Windows Node 版本，安装前校验大小与 SHA256。
+NapCat 运行包固定为 `v4.18.41` Windows Node 版本（从 fork 下载，与上游同一份文件），安装前校验大小与 SHA256。
 
 ## QQ 空间
 
