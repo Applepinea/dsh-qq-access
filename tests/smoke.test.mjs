@@ -643,6 +643,63 @@ test('Steam 审查 S4：错误信息不带 API Key', async () => {
   assert.ok(!src.includes('url.href'), '不要打印完整 URL');
 });
 
+test('批量窗口内先发图再补文字，图片不能丢', async () => {
+  const { collectBatchImages, batchTrigger } = await import('../lib/util.mjs');
+
+  // 真实场景（2026-11-14 归档 #238-241）：
+  //   238 in  [图片]
+  //   239 in  这个看着挺适合你的
+  //   240 out 图片没加载出来诶
+  // 触发消息是那条纯文字，以前只取最后一条 → 图片被整个丢掉。
+  const batch = [
+    { text: '[图片]', images: [{ url: 'https://a/1.png', file: '1.png' }] },
+    { text: '这个看着挺适合你的', images: [] },
+  ];
+  const got = collectBatchImages(batch, 4);
+  assert.equal(got.length, 1, '整批里只剩图片的那条也要带上');
+  assert.equal(got[0].url, 'https://a/1.png');
+
+  // 连续两张图 + 一句文字：两张都要带上
+  const two = collectBatchImages([
+    { images: [{ url: 'https://a/1.png', file: '1.png' }] },
+    { images: [{ url: 'https://a/2.png', file: '2.png' }] },
+    { text: '你觉得哪件比较好', images: [] },
+  ], 4);
+  assert.equal(two.length, 2, '两张图都要带上');
+
+  // 同一张图重复出现只算一次
+  const dup = collectBatchImages([
+    { images: [{ url: 'https://a/1.png', file: '1.png' }] },
+    { images: [{ url: 'https://a/1.png', file: '1.png' }] },
+  ], 4);
+  assert.equal(dup.length, 1, '按 url/file 去重');
+
+  // 只有 file 没有 url 的也要保留（NapCat 本地文件形态）
+  const fileOnly = collectBatchImages([{ images: [{ url: '', file: 'x.png' }] }], 4);
+  assert.equal(fileOnly.length, 1, 'file 形态要保留');
+  // 两者都没有的丢掉
+  assert.equal(collectBatchImages([{ images: [{ url: '', file: '' }] }], 4).length, 0, '空来源要丢掉');
+
+  // 超上限时保留最新的
+  const many = collectBatchImages([
+    { images: [{ url: 'https://a/1.png' }, { url: 'https://a/2.png' }] },
+    { images: [{ url: 'https://a/3.png' }] },
+  ], 2);
+  assert.deepEqual(many.map(x => x.url), ['https://a/2.png', 'https://a/3.png'], '保留最新的两张');
+  assert.equal(collectBatchImages(batch, 0).length, 0, '上限 0 表示不要图');
+
+  // 真正的修复点：触发消息要带上整批图片（正文仍用最后一条）
+  const trigger = batchTrigger(batch, 4);
+  assert.equal(trigger.text, '这个看着挺适合你的', '正文仍然用最后一条');
+  assert.equal(trigger.images.length, 1, '触发消息必须带上前面那条的图片');
+  assert.equal(batchTrigger([], 4), null, '空批次返回 null');
+  // 没有图片时原样返回最后一条，不能凭空造出 images 字段
+  const plain = { text: '只有文字', images: [] };
+  assert.equal(batchTrigger([plain], 4), plain, '没图时原样返回');
+  const rt = read('lib/runtime.mjs');
+  assert.match(rt, /this\.slots\.run\(\(\) => this\.reply\(trigger\)\)/, '要回复带图的触发消息');
+});
+
 test('短链只在自己域名之间跟，且拒绝本机地址', async () => {
   const { blockedHost, hostAllowed, hopAllowed, SHORT_LINK_RELAY_HOSTS } = await import('../lib/parser.mjs');
   const BILI = ['b23.tv', 'bilibili.com'];
@@ -820,7 +877,7 @@ test('不同会话可以并行回复（并发配置真的生效）', () => {
   // 旧写法在 for 里 await 信号量，永远只有一个任务
   assert.ok(!rt.includes('try { await this.slots.run(() => this.reply(last)); }'), '不能在循环里 await');
   assert.match(rt, /await Promise\.all\(jobs\)/, '要并发等所有任务');
-  assert.match(rt, /this\.slots\.run\(\(\) => this\.reply\(last\)\)/, '仍然经过信号量');
+  assert.match(rt, /this\.slots\.run\(\(\) => this\.reply\(trigger\)\)/, '仍然经过信号量（trigger 是合并了整批图片的触发消息）');
 });
 
 test('短链按平台域名受控跟随', async () => {
