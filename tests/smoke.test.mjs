@@ -149,6 +149,190 @@ test('L9 队列满时要给上报方背压信号', () => {
   assert.match(ev, /result\?\.busy \? 503/, 'events 要转成 503');
 });
 
+test('reply.debounceMs 能配且不被 normalizeConfig 丢掉', async () => {
+  const { normalizeConfig } = await import('../lib/config.mjs');
+  const base = {
+    selfId: '10001', ownerIds: ['10002'],
+    onebot: { apiUrl: 'http://127.0.0.1:3000', token: 'x'.repeat(24) },
+    events: { secret: 'y'.repeat(24) },
+  };
+  // 默认值
+  assert.equal(normalizeConfig(base, 'C:/tmp/config.json').reply.debounceMs, 1200);
+  // 显式配置要能透传：normalizeConfig 是逐字段白名单，漏一个字段用户就改不动
+  const c = normalizeConfig({ ...base, reply: { debounceMs: 60000 } }, 'C:/tmp/config.json');
+  assert.equal(c.reply.debounceMs, 60000, 'deburceMs 必须能透传');
+  // 上界保护
+  assert.throws(() => normalizeConfig({ ...base, reply: { debounceMs: 999999 } }, 'C:/tmp/config.json'), /防抖/);
+});
+
+test('ThoughtStore 兼容旧格式 { thoughts: [...] } 不抛错', async () => {
+  // 早期版本把 people[key] 写成 { thoughts: [...] }，后来改成直接存数组。
+  // list() 只认数组时会在 reply() 里抛 all.filter is not a function，直接打断整轮回复。
+  const { ThoughtStore } = await import('../lib/thoughts.mjs');
+  const dir = await mkdtemp(join(tmpdir(), 'qqa-th-'));
+  const s = new ThoughtStore({ dataDir: dir, logger: { warn: () => {} } });
+  await s.init();
+  // 伪造旧格式数据
+  s.people = { '123': { thoughts: [{ at: Date.now() - 1000, text: '旧格式的一条念头，够长', source: 'x' }] } };
+  const list = s.list('123');
+  assert.equal(list.length, 1, '旧格式要能读出来');
+  assert.match(list[0].text, /旧格式/);
+  // 写入后归一成数组
+  const added = await s.remember('123', ['新写的一条念头，长度超过八个字符'], { source: 't' });
+  await s.flush();
+  assert.equal(added, 1);
+  assert.ok(Array.isArray(s.people['123']), '保存后应为数组');
+  // 脏数据不抛
+  s.people = { '1': 'str', '2': null, '3': { foo: 1 } };
+  assert.deepEqual(s.list('1'), []);
+  assert.deepEqual(s.list('2'), []);
+  assert.deepEqual(s.list('3'), []);
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('配置教程要讲清批量窗口，且排在教程最前面', () => {
+  const c = read('lib/client.js');
+  assert.match(c, /批量窗口/, '教程里要出现「批量窗口」这个说法');
+  assert.match(c, /debounceMs/, '要告诉用户改哪个字段');
+  assert.match(c, /★ 她话还没说完就回了/, '要有一条醒目的标题');
+  // 必须排在「① 登录成功之后」之前，否则用户看不到
+  const iStar = c.indexOf('★ 她话还没说完就回了');
+  const iOne = c.indexOf('① 登录成功之后');
+  assert.ok(iStar > 0 && iOne > 0, '两段都要在');
+  assert.ok(iStar < iOne, '批量窗口要排在教程第一条之前');
+});
+
+test('README 也讲了批量窗口和 debounceMs', () => {
+  const r = read('README.md');
+  assert.match(r, /批量窗口/, 'README 要有这一节');
+  assert.match(r, /debounceMs/, 'README 要写字段名');
+  assert.match(r, /1200/, '要说明默认值');
+});
+
+test('避免重复已说过的话：检测器与配置', async () => {
+  const { repeatRatio, findRepeatedReply } = await import('../lib/util.mjs');
+  const { normalizeConfig } = await import('../lib/config.mjs');
+
+  // 1) 相似度：改写过的复述必须抓得住
+  assert.ok(repeatRatio('记得早点睡哦', '记得早点睡哦') >= 0.7, '完全相同');
+  assert.ok(repeatRatio('记得早点睡哦～', '记得早点睡哦') >= 0.7, '只差标点');
+  assert.ok(repeatRatio('嗯嗯，记得早点睡吧', '记得早点睡哦') >= 0.7, '加语气词');
+  assert.ok(repeatRatio('记得早点睡，别熬夜了', '记得早点睡哦') >= 0.7, '扩展一句');
+  // 2) 正常换说法不能误判
+  assert.ok(repeatRatio('今天天气不错，出去走走吧', '记得早点睡哦') < 0.7, '完全不同');
+  assert.ok(repeatRatio('我在吃饭', '我刚吃完饭') < 0.7, '不同的事');
+  assert.ok(repeatRatio('嗯', '好的没问题') < 0.7, '太短不算');
+
+  // 3) 只比她说过的话，别人说的不算
+  const onlyIn = [{ direction: 'in', text: '记得早点睡哦' }];
+  assert.equal(findRepeatedReply('记得早点睡哦', onlyIn).ratio, 0, '别人说的不算重复');
+  const withOut = [{ direction: 'out', text: '记得早点睡哦' }];
+  assert.ok(findRepeatedReply('记得早点睡哦', withOut).ratio >= 0.7, '自己说的算');
+
+  // 4) 配置项可关、阈值可调
+  const base = {
+    selfId: '10001', ownerIds: ['10002'],
+    onebot: { apiUrl: 'http://127.0.0.1:3000', token: 'x'.repeat(24) },
+    events: { secret: 'y'.repeat(24) },
+  };
+  assert.equal(normalizeConfig(base, 'C:/tmp/c.json').reply.avoidRepeat, true, '默认开启');
+  assert.equal(normalizeConfig({ ...base, reply: { avoidRepeat: false } }, 'C:/tmp/c.json').reply.avoidRepeat, false, '可关');
+  assert.equal(normalizeConfig(base, 'C:/tmp/c.json').reply.repeatThreshold, 0.7, '默认阈值 0.7');
+  assert.equal(normalizeConfig({ ...base, reply: { repeatThreshold: 0.9 } }, 'C:/tmp/c.json').reply.repeatThreshold, 0.9, '阈值可调');
+
+  // 5) runtime 真的调用了检测并复用了返回的新文本
+  const rt = read('lib/runtime.mjs');
+  assert.match(rt, /#retryOnRepeat/, '要有重问方法');
+  assert.match(rt, /findRepeatedReply/, '要调用检测器');
+  assert.match(rt, /const outbound = retried \?\? output;/, '重问成功要用新文本');
+  assert.match(rt, /splitSegments\(outbound/, '发出去的是新文本');
+  // 提示词要有约束
+  assert.match(rt, /不要重复你已经说过的话/, '系统提示要写清楚');
+});
+
+test('面板能保存复读与批量窗口设置（PATCHABLE 不能漏字段）', () => {
+  const ui = read('lib/ui.mjs');
+  const body = ui.match(/reply: \[([^\]]+)\]/);
+  assert.ok(body, 'PATCHABLE.reply 要存在');
+  const allowed = body[1].split(',').map((x) => x.trim().replace(/^'|'$/g, '')).filter(Boolean);
+  // 面板提交的字段必须在白名单里，否则点保存会报「不支持的字段」
+  for (const f of ['debounceMs', 'avoidRepeat', 'repeatThreshold']) {
+    assert.ok(allowed.includes(f), f + ' 必须在 PATCHABLE.reply 白名单里');
+  }
+  // 面板要有对应控件
+  const c = read('lib/client.js');
+  assert.match(c, /批量窗口（秒）/, '要有批量窗口输入框');
+  assert.match(c, /form\.debounceSec/, '要绑定到 debounceSec');
+  assert.match(c, /避免重复说过的话/, '要有复读开关');
+  assert.match(c, /form\.avoidRepeat/, '要绑定到 avoidRepeat');
+  // 轮询间隔和批量窗口是两个不同的东西，不能混为一谈
+  assert.match(c, /轮询间隔（秒）/, '轮询要单独一个控件');
+  const iWin = c.indexOf('批量窗口（秒）');
+  const iPoll = c.indexOf('轮询间隔（秒）');
+  assert.ok(iWin > 0 && iPoll > iWin, '批量窗口要排在轮询间隔之前');
+});
+
+test('主动消息不重复最近说过的事', async () => {
+  const { findRepeatedReply, repeatRatio } = await import('../lib/util.mjs');
+  const rt = read('lib/runtime.mjs');
+
+  // 1) 主动消息要把「最近她说过的话」喂给模型
+  assert.match(rt, /saidRecently/, '要取最近发言');
+  assert.match(rt, /你最近在这个对话里已经说过的话/, '要写进 prompt');
+  assert.match(rt, /如果今天下雨你提过，就别再提下雨/, '要有具体禁令');
+
+  // 2) 生成后还要机械校验，不能只靠提示词
+  assert.match(rt, /repeat-suppressed/, '重复时要能放弃这次发送');
+  assert.match(rt, /messageText/, '要能替换成重写后的文本');
+  assert.match(rt, /splitSegments\(messageText/, '发出去的是校验过的文本');
+
+  // 3) 真实场景：刚说完下雨，主动消息不该再说下雨
+  const said = [
+    { direction: 'out', text: '今天下雨了，出门记得带伞' },
+    { direction: 'out', text: '晚饭吃了面条' },
+  ];
+  const dup = findRepeatedReply('外面今天下雨了，别忘了带伞哦', said);
+  assert.ok(dup.ratio >= 0.7, '重复下雨应被抓住，实际 ' + dup.ratio.toFixed(2));
+  const fresh = findRepeatedReply('刚看完一本书，讲航海的', said);
+  assert.equal(fresh.text, '', '说新话题不该被拦，实际 ' + fresh.ratio.toFixed(2));
+
+  // 4) 换个说法的复述也要抓住
+  assert.ok(repeatRatio('今天下雨了', '今天下雨了，出门记得带伞') >= 0.7, '短句被包含');
+});
+
+test('主动消息去重不会无限重试，且受开关控制', () => {
+  const rt = read('lib/runtime.mjs');
+  // 被拦下后必须把窗口标成已处理：dueWindows 只看 fired 列表，
+  // 不标的话同一个窗口在之后每一轮轮询都会重新到期，每次白烧一次模型。
+  const sup = rt.indexOf("reason: 'repeat-suppressed'");
+  assert.ok(sup > 0, '要有 repeat-suppressed 分支');
+  const before = rt.slice(Math.max(0, sup - 400), sup);
+  assert.match(before, /await life\.markFired\(now, window\.id/, '拦下前要先 markFired');
+  // 关掉 avoidRepeat 时不该再读历史、也不该再检测
+  assert.match(rt, /const avoidRepeat = this\.config\.reply\?\.avoidRepeat !== false/, '要读开关');
+  assert.match(rt, /if \(avoidRepeat\) \{/, '读历史要受开关控制');
+  assert.match(rt, /avoidRepeat && saidAsOut\.length/, '生成后检测要受开关控制');
+});
+
+test('主动消息发出去的是校验后的文本', () => {
+  const rt = read('lib/runtime.mjs');
+  // 若分段/情感/返回值仍用原始 text，重写后的新内容不会被发出去
+  assert.match(rt, /splitSegments\(messageText/, '分段用 messageText');
+  assert.match(rt, /replyText: messageText/, '情感记账用 messageText');
+  assert.match(rt, /text: messageText, segments/, '返回值用 messageText');
+});
+
+test('话题词表没有重复条目', async () => {
+  // STOP 是 Set，重复项不会报错但说明手写列表有疏漏
+  const ut = read('lib/util.mjs');
+  const start = ut.indexOf('const STOP = new Set([');
+  assert.ok(start > 0, 'STOP 要存在');
+  const block = ut.slice(start, ut.indexOf(']);', start));
+  const words = [...block.matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  const dups = words.filter((w, i) => words.indexOf(w) !== i);
+  assert.deepEqual(dups, [], 'STOP 不应有重复：' + dups.join(','));
+});
+
 test('M1 热更新时补建「启动时关、现在开」的存储', () => {
   const rt = read('lib/runtime.mjs');
   assert.match(rt, /async applyHotConfig\(next\)/, '要有补建入口');
