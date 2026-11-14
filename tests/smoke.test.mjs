@@ -333,6 +333,542 @@ test('话题词表没有重复条目', async () => {
   assert.deepEqual(dups, [], 'STOP 不应有重复：' + dups.join(','));
 });
 
+test('Steam 状态查询与绑定', async () => {
+  const { normalizePlayer, normalizeOwnedGames, formatPlaytime, describeSteamStatus } = await import('../lib/steam.mjs');
+  const { SteamBindingStore } = await import('../lib/steam-binding.mjs');
+
+  // 1) 在线状态解析
+  const online = normalizePlayer({ steamid: '76561198000000000', personaname: 'T', personastate: 1, gameextrainfo: 'ELDEN RING', gameid: '1245620' });
+  assert.equal(online.inGame, 'ELDEN RING');
+  assert.equal(online.state, '在线');
+  const offline = normalizePlayer({ steamid: '76561198000000000', personastate: 0, lastlogoff: Math.floor(Date.now()/1000) - 7200 });
+  assert.equal(offline.inGame, '', '离线时不该有游戏名');
+  assert.equal(normalizePlayer(null), null, '空输入返回 null');
+
+  // 2) 时长解析：默认只要近两周真的玩过的
+  const owned = normalizeOwnedGames({ response: { games: [
+    { appid: 1, name: 'A', playtime_forever: 100, playtime_2weeks: 0 },
+    { appid: 2, name: 'B', playtime_forever: 50, playtime_2weeks: 30 },
+    { appid: 3, name: '', playtime_forever: 999 },
+  ] } });
+  // 无名游戏过滤掉；A 的近两周是 0，不该冒充「最近在玩」
+  assert.equal(owned.length, 1, '只要近两周玩过的');
+  assert.equal(owned[0].name, 'B', '保留近两周玩过的那个');
+  // 显式要全量时才包含总时长兜底
+  const all = normalizeOwnedGames({ response: { games: [
+    { appid: 1, name: 'A', playtime_forever: 100, playtime_2weeks: 0 },
+    { appid: 2, name: 'B', playtime_forever: 50, playtime_2weeks: 30 },
+  ] } }, { recentOnly: false });
+  assert.equal(all.length, 2, 'recentOnly: false 时保留全部');
+  assert.equal(all[0].name, 'B', '仍按近两周优先排序');
+  // 隐私没开时 Steam 返回 { response: {} } —— 不是错误，是空
+  assert.deepEqual(normalizeOwnedGames({ response: {} }), []);
+
+  // 3) 时长格式化
+  assert.equal(formatPlaytime(0), '');
+  assert.equal(formatPlaytime(45), '45 分钟');
+  assert.equal(formatPlaytime(60), '1 小时');
+  assert.equal(formatPlaytime(185), '3 小时 5 分钟');
+
+  // 4) 状态描述
+  assert.match(describeSteamStatus({ inGame: 'X', sinceMinutes: 42 }), /正在 Steam 上玩《X》/);
+  assert.equal(describeSteamStatus(null), '');
+
+  // 5) 绑定表
+  const dir = await mkdtemp(join(tmpdir(), 'qqa-steam-'));
+  const st = new SteamBindingStore({ dataDir: dir, logger: { warn: () => {} } });
+  await st.init();
+  const b1 = await st.bind('1234567890', '76561198000000000', { nickname: 'me' });
+  assert.equal(b1.ok, true);
+  assert.equal(st.primary('1234567890').steamId, '76561198000000000');
+  // 非法 ID 要明确拒绝，而不是存进去之后查不到
+  const bad = await st.bind('1234567890', 'abc');
+  assert.equal(bad.ok, false);
+  assert.match(bad.reason, /17 位/);
+  // 重复绑定幂等
+  const dup = await st.bind('1234567890', '76561198000000000');
+  assert.equal(dup.duplicate, true);
+  // 反查
+  assert.equal(st.whoIs('76561198000000000'), '1234567890');
+  // 上限
+  await st.bind('1234567890', '76561198000000001');
+  await st.bind('1234567890', '76561198000000002');
+  assert.equal((await st.bind('1234567890', '76561198000000003')).ok, false);
+  // 持久化
+  await st.flush();
+  const st2 = new SteamBindingStore({ dataDir: dir, logger: { warn: () => {} } });
+  await st2.init();
+  assert.equal(st2.list('1234567890').length, 3, '重载后绑定还在');
+  // 解绑
+  await st2.unbind('1234567890');
+  assert.equal(st2.list('1234567890').length, 0);
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('Steam 接入是「注入上下文 + 主动消息」，不是只做工具', () => {
+  const rt = read('lib/runtime.mjs');
+  const tools = read('lib/tools.mjs');
+  const cfg = read('lib/config.mjs');
+  const ui = read('lib/ui.mjs');
+  // 注入：回复时把状态放进 input
+  // 必须断言「真的出现在 input 对象里」，而不是「文件里出现过这个词」——
+  // 后者把注入那行注释掉之后测试仍然是绿的，等于没有判别力。
+  assert.match(rt, /\.\.\.\(steamState \? \{ their_steam: steamState \} : \{\}\)/, '要用展开语法注入 input');
+  assert.match(rt, /const steamState = await this\.steamPromptBlock\(\{ message, signal \}\)/, '要真的去取状态');
+  // 主动消息：也要注入，但提示词要求别每次都提
+  assert.match(rt, /steamProactiveBlock/, '主动消息要有独立入口');
+  assert.match(rt, /不要一上来就问他游戏的事/, '主动消息要明确要求别每次都提');
+  // 群聊默认不注入
+  assert.match(rt, /cfg\.privateOnly !== false && message\?\.kind !== 'private'/, '群聊要能挡住');
+  // 只读工具保留；绑定/解绑必须只在面板里 —— SteamID 是公开信息，
+  // 如果允许在群里绑，任何人都能把别人的 ID 绑到自己身上。
+  assert.match(tools, /qq_steam_status/, '只读查询工具要保留');
+  assert.ok(!tools.includes("tool('qq_steam_bind'"), '聊天里不能有绑定工具');
+  assert.ok(!tools.includes("tool('qq_steam_unbind'"), '聊天里不能有解绑工具');
+  const uiSrc = read('lib/ui.mjs');
+  assert.match(uiSrc, /\/steam\/bindings/, '面板要有绑定列表接口');
+  assert.match(uiSrc, /\/steam\/action/, '面板要有绑定操作接口');
+  // 缓存时间可调
+  assert.match(cfg, /cacheTtlMs: integer\(raw\.steam\?\.cacheTtlMs/, '缓存时间要可配');
+  assert.match(ui, /steam: \['enabled'/, 'PATCHABLE 要有 steam 段');
+  // 失败不能让她说不出话
+  assert.match(rt, /Steam 状态查询失败/, '要 catch 住');
+});
+
+test('没有「默认 SteamID」回退，只有面板绑定表', async () => {
+  const { normalizeConfig } = await import('../lib/config.mjs');
+  const rt = read('lib/runtime.mjs');
+  const cl = read('lib/client.js');
+  const cfg = read('lib/config.mjs');
+
+  // 配置里不该再有 steamId 这个字段 —— 留着它意味着「没绑定的人查到号主」，
+  // 然后她会在聊天里把号主的状态说成是对方的。
+  const base = { selfId: '10001', ownerIds: ['10002'],
+    onebot: { apiUrl: 'http://127.0.0.1:3000', token: 'x'.repeat(24) },
+    events: { secret: 'y'.repeat(24) } };
+  const c = normalizeConfig({ ...base, steam: { enabled: true, apiKey: 'a'.repeat(32), steamId: '76561198000000000' } }, 'C:/t.json');
+  assert.equal('steamId' in c.steam, false, 'normalizeConfig 不该再输出 steamId');
+  assert.ok(!cfg.includes('steam: { enabled: false, apiKey: \'\', steamId'), 'bootstrap 里不该有 steamId');
+
+  // 查询只认绑定表
+  assert.match(rt, /const steamId = bound\?\.steamId \|\| ''/, '不能回退到配置里的默认 ID');
+  assert.ok(!rt.includes('config.steam?.steamId'), 'runtime 不该读 config.steam.steamId');
+
+  // 面板上没有输入框
+  assert.ok(!cl.includes('默认 SteamID'), '面板不该再有这个输入框');
+  assert.ok(!cl.includes('form.steamId'), '表单不该再有这个字段');
+});
+
+test('Steam 开关能保存且绑定表独立成卡', () => {
+  const ui = read('lib/ui.mjs');
+  const cl = read('lib/client.js');
+
+  // 1) /state 必须把 steam 段回传给面板。
+  // 漏了这行，面板读 data.config.steam?.enabled 永远是 undefined，
+  // 于是「勾选开启 → 保存 → 刷新」又变回关闭。
+  assert.match(ui, /steam: maskSecret\(raw\.steam\)/, 'publicState 要回传 steam 段');
+  assert.match(cl, /steamEnabled: data\.config\.steam\?\.enabled === true/, '面板要从 config 读开关');
+
+  // 2) 绑定表要和 Steam 设置在同一张卡片里 —— 它属于同一个功能，
+  // 分成两张卡会让人以为要分别开两个开关。
+  assert.ok(!cl.includes('h(Card, { title: "Steam 绑定" }'), '不该有独立的绑定卡片');
+  const iSteam = cl.indexOf('h(Card, { title: "Steam" }');
+  assert.ok(iSteam > 0, '要有 Steam 卡片');
+  // 绑定区必须落在 Steam 卡片内部（下一张卡之前）
+  const nextCardIdx = cl.indexOf('h(Card, { title:', iSteam + 10);
+  const steamSection = cl.slice(iSteam, nextCardIdx > 0 ? nextCardIdx : undefined);
+  assert.match(steamSection, /绑定表（QQ → Steam）/, '绑定表要在 Steam 卡片里');
+  assert.match(steamSection, /steamBindSubmit/, '绑定按钮要在 Steam 卡片里');
+  // 绑定区不能受 steamEnabled 控制 —— 关掉开关时也要能看到已有绑定
+  const bindAt = steamSection.indexOf('绑定表（QQ → Steam）');
+  const beforeBind = steamSection.slice(0, bindAt);
+  const lastCond = beforeBind.lastIndexOf('!form.steamEnabled');
+  // 绑定区之前最后一个开关条件应该已经闭合，绑定区本身不该再被包在条件里
+  assert.ok(!steamSection.slice(bindAt).includes('!form.steamEnabled ? null'), '绑定区不该被开关隐藏');
+});
+
+test('绑定表单是多行草稿：成功后按钮变状态并自动加一行', () => {
+  const cl = read('lib/client.js');
+
+  // 草稿数组取代了单个 qq/steamId 输入
+  assert.match(cl, /const \[steamDrafts, setSteamDrafts\] = useState\(\[\{ id: 1, qq: "", steamId: "", done: false \}\]\)/, '要有草稿数组');
+  assert.ok(!cl.includes('steamBindQq'), '旧的单行输入要移除');
+  assert.ok(!cl.includes('steamBindId'), '旧的单行输入要移除');
+
+  // 成功后：这一行标记 done，界面上渲染成「✓ 已绑定」而不是按钮
+  assert.match(cl, /done: true/, '成功后要标记 done');
+  assert.match(cl, /✓ 已绑定/, '要显示已绑定状态');
+  assert.ok(cl.includes('✓ 已绑定'), 'done 时要显示已绑定文字');
+
+  // 自动补一行：没有空行时才加
+  assert.match(cl, /const hasEmpty = marked\.some\(\(d\) => !d\.done\)/, '要先检查有没有空行');
+  assert.ok(cl.includes('return hasEmpty ? marked : [...marked, { id: Date.now(), qq: "", steamId: "", done: false }];'), '没有空行时自动补一行');
+
+  // 失败要撤回 done，否则那一行就改不了也重试不了
+  assert.match(cl, /catch \(error\) \{[\s\S]{0,200}done: false/, '失败要撤回 done');
+
+  // 多行时可以删掉某一行
+  assert.match(cl, /removeSteamDraft/, '要能删掉某一行');
+});
+
+test('1.2.1 审查：复读判定不再被单个三字词触发，短句全等仍能抓到', async () => {
+  const { findRepeatedReply } = await import('../lib/util.mjs');
+  const hit = (a, b) => findRepeatedReply(a, [{ direction: 'out', text: b }]).text !== '';
+
+  // N1：单个日常三字词不能构成复读
+  assert.equal(hit('我去吃饭了', '你吃饭了吗'), false, '「吃饭了」不该判重');
+  assert.equal(hit('早点睡', '今天辛苦了，记得早点睡哦，明天还有会'), false, '短句被长句顺口提到不算复读');
+  assert.equal(hit('今天下雨了，出门记得带伞', '下雨了我就不出门了，你自己决定'), false, '只共有一个「下雨了」不算');
+
+  // 真正的同义改写仍要抓住（两个以上实质话题重合）
+  assert.equal(hit('今天下雨了，出门记得带伞', '外面今天下雨了，别忘了带伞哦'), true, '同义改写要判重');
+
+  // N2：短句完全相同必须能判出来
+  assert.equal(hit('晚安', '晚安'), true, '两字完全重复要判');
+  assert.equal(hit('嗯嗯', '嗯嗯'), true, '两字完全重复要判');
+  assert.equal(hit('好的', '好的'), true, '两字完全重复要判');
+  assert.equal(hit('在的', '在的呀'), true, '短句包含要判');
+
+  // 正常换说法不误伤
+  assert.equal(hit('我在吃饭', '我刚吃完饭'), false);
+  assert.equal(hit('今天天气不错，出去走走吧', '记得早点睡哦'), false);
+  assert.equal(hit('嗯', '好的没问题'), false, '单字不算');
+});
+
+test('1.2.1 审查：重问为空时沿用原文，不吞回复', () => {
+  const rt = read('lib/runtime.mjs');
+  // `retried ?? output` 对空串不生效 —— 必须返回 null 才能回退到原文
+  assert.match(rt, /if \(!next\) return null;/, '重问为空要返回 null 而不是空串');
+  assert.match(rt, /const outbound = retried \?\? output;/, '调用处仍用 ?? 回退');
+});
+
+test('1.2.1 审查：qq_meme_send 用正确的 access.target 签名', () => {
+  const t = read('lib/tools.mjs');
+  // 用拼接构造被禁字符串，否则断言自己就会命中自己
+  const banned = 'access.target(' + 'args.kind, peer)';
+  assert.ok(!t.includes(banned), '不能把字符串当参数对象传');
+  assert.match(t, /access\.target\(args, exec\.agent, \{ management: true \}\)/, '要用正确的签名');
+});
+
+test('1.2.1 审查：ownerHarnessTools 开启时不崩', () => {
+  const rt = read('lib/runtime.mjs');
+  // allowedTools 为 null 表示「不限制」，不是「没有工具」
+  assert.ok(!rt.includes("this.memes && allowedTools.includes('qq_meme_search')"), '不能对 null 调 includes');
+  assert.match(rt, /!Array\.isArray\(allowedTools\) \|\| allowedTools\.includes\('qq_meme_search'\)/, 'null/非数组要当成不受限');
+});
+
+test('1.2.1 审查：自动收集表情收的是贴纸不是照片', () => {
+  const ob = read('lib/onebot.mjs');
+  const rt = read('lib/runtime.mjs');
+  // 贴纸要在独立字段里，同时不能进 images（那个是给视觉模型的）
+  assert.match(ob, /stickers: stickerSegments/, 'normalizeEvent 要输出 stickers');
+  assert.match(ob, /filter\(x => x\?\.type === 'image' && isSticker\(x\)\)/, 'stickers 只装贴纸');
+  assert.match(ob, /filter\(x => x\?\.type === 'image' && !isSticker\(x\)\)/, 'images 仍然排除贴纸');
+  // 收集只读 stickers
+  assert.match(rt, /\(message\.sticksers \?\? \[\]\)|message\.stickers/, 'collectImages 要读 stickers');
+  assert.ok(!rt.includes('for (const image of message.images.slice(0, 4))'), '不能再用 images 收集');
+});
+
+test('1.2.1 审查：热闹的群里也能撤回自己刚发的消息', () => {
+  const st = read('lib/store.mjs');
+  const rt = read('lib/runtime.mjs');
+  assert.match(st, /direction = ''/, 'query 要支持 direction 参数');
+  assert.match(st, /if \(direction && m\.direction !== direction\) continue;/, '方向过滤要在计入 limit 之前');
+  assert.match(rt, /limit: 20, direction: 'out'/, 'findLatestOwnMessage 要按方向查');
+  // 主动消息去重同样受这个漏洞影响
+  assert.match(rt, /kind: target\.kind, peerId: target\.peerId, limit: 20, direction: 'out'/, '主动消息去重要按方向查');
+});
+
+test('Steam 审查 S1：失败也进缓存，不拖慢每条私聊', async () => {
+  const { SteamClient } = await import('../lib/steam.mjs');
+  const c = new SteamClient({ apiKey: 'a'.repeat(32), timeoutMs: 8000, errorCacheTtlMs: 60000 });
+  // 第一次会真发请求（这里必然失败：key 无效）
+  let first = 0;
+  try { const t = Date.now(); await c.status('76561198000000000'); } catch { first = Date.now(); }
+  // 第二次必须秒失败 —— 命中失败缓存
+  const t2 = Date.now();
+  try { await c.status('76561198000000000'); } catch { /* expected */ }
+  assert.ok(Date.now() - t2 < 1000, '第二次不能又等满超时');
+  assert.equal(c.cache.size, 1, '失败要写进缓存');
+});
+
+test('Steam 审查 S2：最近在玩只算近两周', async () => {
+  const { normalizeOwnedGames, describeSteamStatus } = await import('../lib/steam.mjs');
+  // 两周都没玩：不能拿总时长冒充「最近」
+  const old = normalizeOwnedGames({ response: { games: [
+    { appid: 1, name: '老游戏', playtime_forever: 6000, playtime_2weeks: 0 },
+  ] } });
+  assert.equal(old.length, 0, '两周没玩的不能进「最近在玩」');
+  const d1 = describeSteamStatus({ stateCode: 1, state: '在线', recentGames: old });
+  assert.ok(!d1.includes('最近在玩'), '不能出现「最近在玩」');
+  assert.ok(d1.includes('最近两周没有玩游戏的记录'), '要说明没记录');
+
+  // 有近两周记录：时长用近两周的，不是总时长
+  const recent = normalizeOwnedGames({ response: { games: [
+    { appid: 1, name: '老游戏', playtime_forever: 6000, playtime_2weeks: 0 },
+    { appid: 2, name: '新游戏', playtime_forever: 100, playtime_2weeks: 185 },
+  ] } });
+  const d2 = describeSteamStatus({ stateCode: 1, state: '在线', recentGames: recent });
+  assert.ok(d2.includes('近两周 3 小时 5 分钟'), '用近两周时长');
+  assert.ok(!d2.includes('100 小时'), '不能拿总时长冒充');
+});
+
+test('Steam 审查 S3：重复绑定时能把昵称补写进去', async () => {
+  const { SteamBindingStore } = await import('../lib/steam-binding.mjs');
+  const dir = await mkdtemp(join(tmpdir(), 'qqa-s3-'));
+  const st = new SteamBindingStore({ dataDir: dir, logger: { warn: () => {} } });
+  await st.init();
+  // 首次绑定：面板还没探测到昵称
+  await st.bind('1234567890', '76561198000000000', { nickname: '' });
+  assert.equal(st.primary('1234567890').nickname, '');
+  // 探测到之后再补写
+  const r = await st.bind('1234567890', '76561198000000000', { nickname: 'TestUser' });
+  assert.equal(r.duplicate, true);
+  assert.equal(r.updated, true, '要标记成已更新');
+  assert.equal(st.primary('1234567890').nickname, 'TestUser', '昵称要写进去');
+  // 传空昵称不能把已有的清掉
+  await st.bind('1234567890', '76561198000000000', { nickname: '' });
+  assert.equal(st.primary('1234567890').nickname, 'TestUser', '空昵称不清空');
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('Steam 审查 S4：错误信息不带 API Key', async () => {
+  const { redactSteamUrl } = await import('../lib/steam.mjs');
+  const raw = 'https://api.steampowered.com/x?key=abcdef123456&steamids=1';
+  const safe = redactSteamUrl(raw);
+  assert.ok(!safe.includes('abcdef123456'), 'Key 要被抹掉');
+  assert.ok(safe.includes('key=***'), '保留字段名便于排查');
+  // 代码里不能出现把 url 拼进错误的写法
+  const src = read('lib/steam.mjs');
+  assert.ok(!src.includes('url.href'), '不要打印完整 URL');
+});
+
+test('短链只在自己域名之间跟，且拒绝本机地址', async () => {
+  const { blockedHost, hostAllowed, hopAllowed, SHORT_LINK_RELAY_HOSTS } = await import('../lib/parser.mjs');
+  const BILI = ['b23.tv', 'bilibili.com'];
+
+  // 本机 / 内网 / IP 字面量一律拒绝
+  for (const bad of ['localhost', 'a.localhost', '127.0.0.1', '10.1.2.3', '169.254.169.254', '[::1]', '::1', '']) {
+    assert.equal(blockedHost(bad), true, '要拒绝 ' + JSON.stringify(bad));
+  }
+  // 平台域名不是 IP，放行
+  for (const good of ['b23.tv', 'www.bilibili.com', 'xhslink.com']) {
+    assert.equal(blockedHost(good), false, '要放行 ' + good);
+  }
+
+  // 允许子域，但不能被后缀拼接骗过（evilbilibili.com 不是 bilibili.com）
+  assert.equal(hostAllowed('www.bilibili.com', BILI), true);
+  assert.equal(hostAllowed('b23.tv', BILI), true);
+  assert.equal(hostAllowed('evilbilibili.com', BILI), false);
+  assert.equal(hostAllowed('bilibili.com.evil.com', BILI), false);
+  assert.equal(hostAllowed('example.com', BILI), false);
+
+  // 中转白名单：已知短链服务可以当中间跳，但必须是显式名单
+  assert.ok(SHORT_LINK_RELAY_HOSTS.includes('t.cn'), 't.cn 要在中转名单');
+  assert.ok(SHORT_LINK_RELAY_HOSTS.includes('url.cn'), 'url.cn 要在中转名单');
+  assert.equal(hopAllowed('t.cn', { allowHosts: BILI, relayHosts: SHORT_LINK_RELAY_HOSTS }), true, '白名单中转可过');
+  // 不传 relayHosts 时，中转域名不算允许 —— 必须显式打开
+  assert.equal(hopAllowed('t.cn', { allowHosts: BILI }), false, '默认不认中转');
+  // 名单外的第三方域名一律拒绝
+  assert.equal(hopAllowed('evil.example.com', { allowHosts: BILI, relayHosts: SHORT_LINK_RELAY_HOSTS }), false);
+  // 后缀拼接同样挡得住
+  assert.equal(hopAllowed('evilt.cn', { allowHosts: BILI, relayHosts: SHORT_LINK_RELAY_HOSTS }), false);
+
+  // 普通网页抓取必须继续不跟随跳转：这是挡 SSRF 的底线
+  const src = read('lib/parser.mjs');
+  const fetchTextBody = src.slice(src.indexOf('async function fetchText'), src.indexOf('async function resolveShortLink'));
+  assert.ok(fetchTextBody.includes("redirect: 'error'"), '普通请求不能跟随跳转');
+  // 短链专用路径：手动处理，且最多 3 跳、只走 https
+  assert.match(src, /const SHORT_LINK_MAX_HOPS = 3/, '最多 3 跳');
+  assert.match(src, /url\.protocol !== 'https:'/, '只允许 https');
+  assert.match(src, /redirect: 'manual'/, '短链手动跟随');
+  // 中转域名不能当终点：没落到平台就失败
+  assert.match(src, /短链停在中转域名上，没有落到平台/, '终点必须是平台域名');
+  // 两个平台的允许域名单
+  assert.match(src, /allowHosts: \['b23\.tv', 'bilibili\.com'\]/, 'b23 只跟 B 站域名');
+  assert.match(src, /allowHosts: \['xhslink\.com', 'xiaohongshu\.com'\]/, '小红书只跟自家域名');
+});
+
+
+test('Steam S5：正在玩的时候不能说「最近两周没有玩」', async () => {
+  const { describeSteamStatus } = await import('../lib/steam.mjs');
+  // 1) 正在玩，但游戏详情没公开 —— 时长拿不到，不代表没在玩。
+  //    以前这里会同时输出「正在玩《X》」和「最近两周没有玩游戏的记录」，自相矛盾。
+  const playingPrivate = describeSteamStatus({
+    stateCode: 1, state: '在线', inGame: 'ELDEN RING', gamesUnavailable: true, recentGames: [],
+  });
+  assert.ok(playingPrivate.includes('正在 Steam 上玩《ELDEN RING》'), '要说正在玩');
+  assert.ok(!playingPrivate.includes('最近两周没有玩游戏的记录'), '正在玩时不能说没记录');
+  assert.ok(playingPrivate.includes('游戏详情没有公开'), '拿不到要说明是隐私问题');
+
+  // 2) 在线但详情没公开、也没在玩：同样不能断言「没玩」
+  const onlinePrivate = describeSteamStatus({
+    stateCode: 1, state: '在线', gamesUnavailable: true, recentGames: [],
+  });
+  assert.ok(!onlinePrivate.includes('最近两周没有玩游戏的记录'), '拿不到时不能编结论');
+  assert.ok(onlinePrivate.includes('游戏详情没有公开'), '要提示隐私');
+
+  // 3) 确实在线、详情公开、两周没开过：这句才成立
+  const onlineNoGames = describeSteamStatus({ stateCode: 1, state: '在线', recentGames: [] });
+  assert.ok(onlineNoGames.includes('最近两周没有玩游戏的记录'), '公开且没玩才这么说');
+
+  // 4) 离线时不必补这句
+  const offline = describeSteamStatus({ stateCode: 0, state: '离线', recentGames: [] });
+  assert.ok(!offline.includes('最近两周没有玩游戏的记录'), '离线时不补没记录');
+});
+
+test('主动消息因重复放弃时不占额度', async () => {
+  const { VirtualLife } = await import('../lib/virtual-life.mjs');
+  const dir = await mkdtemp(join(tmpdir(), 'qqa-mf-'));
+  const life = new VirtualLife({ dataDir: dir, logger: { warn: () => {} } });
+  await life.init();
+  const today = new Date();
+  await life.markFired(today, 'w-1', 'private:1', { countAsSent: false });
+  await life.flush();
+  const key = Object.keys(life.state.fired)[0];
+  assert.ok((life.state.fired[key] ?? []).includes('w-1'), 'fired 要记，避免重复触发');
+  assert.equal((life.state.sent?.[key] ?? []).length, 0, 'sent 不能记，不能占额度');
+  // 真发出去才记
+  await life.markFired(today, 'w-2', 'private:1');
+  await life.flush();
+  assert.equal((life.state.sent?.[key] ?? []).length, 1, '真发了才记一条');
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('批量窗口填 0 不会被改成 1.2 秒', () => {
+  const cl = read('lib/client.js');
+  // Number(0) || 1.2 会把 0 变成 1.2
+  assert.ok(!cl.includes('Number(form.debounceSec) || 1.2'), '不能用 || 兜底');
+  assert.match(cl, /Number\.isFinite\(raw\) \? raw : 1\.2/, '只在该回退时才回退');
+});
+
+test('账本：failed 后换正文可以重做，uncertain 不抛错', async () => {
+  const { ActionLedger } = await import('../lib/store.mjs');
+  const dir = await mkdtemp(join(tmpdir(), 'qqa-led2-'));
+  const led = new ActionLedger(dir);
+  await led.init();
+  let calls = 0;
+
+  // failed 后模型改写措辞是正常的，必须允许重做
+  try {
+    await led.run('a', { text: '我下楼买点东西' }, async () => {
+      const e = new Error('网络'); e.name = 'OneBotRejectedError'; throw e;
+    });
+  } catch { /* failed */ }
+  const r1 = await led.run('a', { text: '我去楼下买点东西' }, async () => { calls++; return { status: 'sent', messageId: 'm1' }; });
+  assert.equal(r1.status, 'sent', 'failed 后换正文要能发出去');
+  assert.equal(calls, 1);
+
+  // sent 之后换正文仍然要拒绝：同一个编号不能把另一段话发给同一个人
+  await assert.rejects(
+    () => led.run('a', { text: '完全不同的内容' }, async () => ({ status: 'sent' })),
+    /同一 request_id/,
+  );
+
+  // uncertain 换正文：短路且不抛（抛了会让恢复逻辑每轮撞一次）
+  try {
+    await led.run('b', { text: 'A' }, async () => {
+      const e = new Error('中断'); e.name = 'AbortError'; throw e;
+    });
+  } catch { /* uncertain */ }
+  const before = calls;
+  const r2 = await led.run('b', { text: 'B 完全不同' }, async () => { calls++; return { status: 'sent' }; });
+  assert.equal(r2.status, 'uncertain');
+  assert.equal(r2.duplicate, true);
+  assert.equal(calls, before, 'uncertain 不能重发');
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('回合超时写持久放弃记录，restorePending 会跳过', async () => {
+  const { ReplySettledStore } = await import('../lib/reply-settled.mjs');
+  const dir = await mkdtemp(join(tmpdir(), 'qqa-rs-'));
+  const st = new ReplySettledStore({ dataDir: dir, logger: { warn: () => {} } });
+  await st.init();
+  assert.equal(st.has('private', '1', '123'), false);
+  await st.mark('private', '1', '123', 'timeout');
+  assert.equal(st.has('private', '1', '123'), true);
+  assert.equal(st.has('private', '1', '999'), false, '不同消息不受影响');
+  assert.equal(st.has('group', '1', '123'), false, '不同会话不受影响');
+  // 持久化：重启后仍然跳过
+  await st.flush();
+  const st2 = new ReplySettledStore({ dataDir: dir, logger: { warn: () => {} } });
+  await st2.init();
+  assert.equal(st2.has('private', '1', '123'), true);
+  // 空 id 不能误判
+  assert.equal(st2.has('private', '1', ''), false);
+  await rm(dir, { recursive: true, force: true });
+});
+
+test('限流等待不占全局锁', async () => {
+  const { RateLimiter } = await import('../lib/util.mjs');
+  const rl = new RateLimiter({ globalGapMs: 0, peerGapMs: 400, maxPerMinute: 100 });
+  // 两个不同会话：都不该被对方的 peerGap 拖住
+  const t0 = Date.now();
+  await Promise.all([rl.wait('A'), rl.wait('B')]);
+  const both = Date.now() - t0;
+  assert.ok(both < 200, '锁不能被 delay 占住，实际 ' + both + 'ms');
+  // 同一会话仍然要等够间隔
+  const rl2 = new RateLimiter({ globalGapMs: 0, peerGapMs: 300, maxPerMinute: 100 });
+  const t1 = Date.now();
+  await rl2.wait('A');
+  await rl2.wait('A');
+  assert.ok(Date.now() - t1 >= 250, '同会话间隔要保留');
+});
+
+test('不同会话可以并行回复（并发配置真的生效）', () => {
+  const rt = read('lib/runtime.mjs');
+  // 旧写法在 for 里 await 信号量，永远只有一个任务
+  assert.ok(!rt.includes('try { await this.slots.run(() => this.reply(last)); }'), '不能在循环里 await');
+  assert.match(rt, /await Promise\.all\(jobs\)/, '要并发等所有任务');
+  assert.match(rt, /this\.slots\.run\(\(\) => this\.reply\(last\)\)/, '仍然经过信号量');
+});
+
+test('短链按平台域名受控跟随', async () => {
+  const { blockedHost, hostAllowed } = await import('../lib/parser.mjs');
+  const src = read('lib/parser.mjs');
+  // 本机和 IP 一律拒绝
+  for (const h of ['localhost', '127.0.0.1', '192.168.1.1', '::1', '169.254.169.254']) {
+    assert.equal(blockedHost(h), true, h + ' 应该被拦');
+  }
+  assert.equal(blockedHost('b23.tv'), false);
+  // 域名后缀匹配不能被相似域名骗过
+  assert.equal(hostAllowed('www.bilibili.com', ['bilibili.com']), true);
+  assert.equal(hostAllowed('evil-bilibili.com', ['bilibili.com']), false);
+  assert.equal(hostAllowed('bilibili.com.evil.com', ['bilibili.com']), false);
+  // 短链走受控跟随，普通请求仍然不跟
+  assert.match(src, /redirect: 'manual'/, '短链要手动跟跳转');
+  assert.match(src, /redirect: 'error'/, '普通请求仍然不跟');
+  assert.match(src, /SHORT_LINK_MAX_HOPS = 3/);
+  assert.match(src, /allowHosts: \['b23\.tv', 'bilibili\.com'\]/);
+  assert.match(src, /allowHosts: \['xhslink\.com', 'xiaohongshu\.com'\]/);
+});
+
+test('立即发说说被拒时用真实返回值，不读 history[0]', () => {
+  const rt = read('lib/runtime.mjs');
+  const ui = read('lib/ui.mjs');
+  const tl = read('lib/tools.mjs');
+  // 三个分支都要返回结果
+  assert.match(rt, /return \{ status: 'failed'/, 'failed 分支要返回');
+  assert.match(rt, /return \{ status: 'uncertain'/, 'uncertain 分支要返回');
+  assert.match(rt, /return \{ status, tid: result\.tid/, 'sent 分支要返回');
+  // 调用方不能再从历史里猜
+  assert.ok(!ui.includes("const latest = after.history[0] ?? null;"), '面板不能读 history[0]');
+  assert.ok(!tl.includes('state.snapshot(cfg).history[0]'), '工具不能读 history[0]');
+  assert.match(ui, /outcome\?\.status/, '面板要用返回值');
+  assert.match(tl, /outcome\?\.status/, '工具要用返回值');
+});
+
+test('定时主动消息和快照用同一组参数', () => {
+  const rt = read('lib/runtime.mjs');
+  // 两处 dueWindows 都要传 defaultAudience 和 minGapMinutes
+  const calls = rt.split('dueWindows(').length - 1;
+  assert.ok(calls >= 2, '至少两处调用');
+  const withAudience = rt.split('defaultAudience: this.#defaultProactiveAudience').length - 1;
+  assert.ok(withAudience >= 2, '两处都要传 defaultAudience，实际 ' + withAudience);
+  const withGap = rt.split('minGapMinutes: Number(cfg.proactiveMinGapMinutes').length - 1;
+  assert.ok(withGap >= 1, '推送路径要传 minGapMinutes');
+});
+
 test('M1 热更新时补建「启动时关、现在开」的存储', () => {
   const rt = read('lib/runtime.mjs');
   assert.match(rt, /async applyHotConfig\(next\)/, '要有补建入口');
@@ -545,9 +1081,13 @@ test('H1 whenIdle 必须有上限，卡住不能停掉所有回复', () => {
   assert.match(rt, /#awaitAgentIdle\(record, idleMs\)/, '要包一层超时');
   assert.match(rt, /record\.agent\.cancel\(\{ kind: 'user' \}\)/, '超时要先 cancel');
   // 超时后必须把这轮记成已处理，否则 restorePending 会反复重跑
-  const seg = rt.slice(rt.indexOf('if (!idleOk)'), rt.indexOf('if (!idleOk)') + 400);
+  // 窗口给大一点：这段里有解释为什么不能写进聊天归档的注释。
+  const seg = rt.slice(rt.indexOf('if (!idleOk)'), rt.indexOf('if (!idleOk)') + 1400);
   assert.match(seg, /record\.lastMessageId = message\.messageId/, '超时要标记已处理');
   assert.match(seg, /return;/, '超时要跳出本轮');
+  // 光有内存标记不够：restorePending 只比较归档时间，必须写持久记录
+  assert.match(seg, /replySettled\?\.mark\(/, '超时要写持久放弃记录');
+  assert.match(rt, /replySettled\?\.has\(conversation\.kind/, 'restorePending 要跳过已放弃的');
 });
 
 test('H3 账本：failed 和超时 pending 允许重做，sent/uncertain 短路', async () => {
@@ -994,7 +1534,11 @@ test('教程要讲清「登录成功后怎样不再弹 WebUI」', () => {
 
 test('教程要讲天气 API Key 和各模块', () => {
   const c = read('lib/client.js');
-  assert.ok(c.includes('天气 API Key（和风天气）'), '要讲天气 Key');
+  assert.ok(c.includes('和风天气'), '要讲天气 Key');
+  assert.ok(c.includes('steamcommunity.com/dev/apikey'), '要讲 Steam Key 申请地址');
+  assert.ok(c.includes('Steam 的「游戏详情」隐私必须设为公开'), '要提醒游戏详情要公开');
+  assert.ok(c.includes('SteamID64 怎么找'), '要教怎么找 SteamID');
+  assert.ok(c.includes('改完配置一定要点最下方'), '要有保存按钮提醒');
   assert.ok(c.includes('dev.qweather.com'), '要给出注册地址');
   assert.ok(c.includes('各模块是干什么的'), '要有模块总览');
   // Key 的真实校验规则，写进教程省得用户粘错
