@@ -1,4 +1,4 @@
-// 冒烟测试：不需要 DSH 宿主即可运行，覆盖清单约定与配置校验。
+﻿// 冒烟测试：不需要 DSH 宿主即可运行，覆盖清单约定与配置校验。
 //
 // 这里刻意只测「不依赖宿主、不依赖网络」的部分：清单指向的文件真实存在、
 // 配置校验的边界。真正需要宿主的部分（导出形状）在没有装宿主时自动跳过。
@@ -190,16 +190,12 @@ test('ThoughtStore 兼容旧格式 { thoughts: [...] } 不抛错', async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-test('配置教程要讲清批量窗口，且排在教程最前面', () => {
+test('配置教程要讲清批量窗口', () => {
   const c = read('lib/client.js');
   assert.match(c, /批量窗口/, '教程里要出现「批量窗口」这个说法');
-  assert.match(c, /debounceMs/, '要告诉用户改哪个字段');
-  assert.match(c, /★ 她话还没说完就回了/, '要有一条醒目的标题');
-  // 必须排在「① 登录成功之后」之前，否则用户看不到
-  const iStar = c.indexOf('★ 她话还没说完就回了');
-  const iOne = c.indexOf('① 登录成功之后');
-  assert.ok(iStar > 0 && iOne > 0, '两段都要在');
-  assert.ok(iStar < iOne, '批量窗口要排在教程第一条之前');
+  // 新教程按章节组织，批量窗口归入「面板配置说明」的回复节奏条目
+  assert.ok(c.includes('调整批量窗口、分段间隔和每分钟回复上限'), '要讲清它管什么');
+  assert.ok(c.includes('回复节奏'), '要指出在哪个卡片里改');
 });
 
 test('README 也讲了批量窗口和 debounceMs', () => {
@@ -641,6 +637,191 @@ test('Steam 审查 S4：错误信息不带 API Key', async () => {
   // 代码里不能出现把 url 拼进错误的写法
   const src = read('lib/steam.mjs');
   assert.ok(!src.includes('url.href'), '不要打印完整 URL');
+});
+
+test('图片不强制回复，但决定了要回就必须真看得见', async () => {
+  const { scoreGroupMessage } = await import('../lib/group-gate.mjs');
+  const base = { selfId: '3576557899', selfNames: ['大肥鱼'], interests: ['游戏'], threshold: 3 };
+
+  // 关键设计：发图**不是**回复的理由。
+  // 群里刷图很常见，逼她每张都接会显得话痨。要不要回仍由原来的闸门决定。
+  const pureImage = scoreGroupMessage({ text: '[图片]', images: [{ url: 'x' }] }, base);
+  assert.equal(pureImage.reply, false, '纯图片不该强制回复');
+  assert.equal(pureImage.score, 0, '图片不加分');
+
+  // 被 @ 时当然要回（原有逻辑不变）
+  assert.equal(scoreGroupMessage({ text: '[图片]', images: [{ url: 'x' }], mentioned: true }, base).reply, true, '被@要回');
+
+  // 但只要决定回，图片和贴纸都必须送进视觉上下文 ——
+  // 否则她会回「表情包我这儿看不了」，听起来像能力缺陷。
+  const rt = read('lib/runtime.mjs');
+  assert.match(rt, /const sources = \[\.\.\.\(message\.images \?\? \[\]\), \.\.\.\(message\.stickers \?\? \[\]\)\]/, '图片和贴纸都要进 sources');
+  assert.match(rt, /const hasPictures = \(message\.images\?\.length \?\? 0\) \+ \(message\.stickers\?\.length \?\? 0\) > 0/, '有图或有贴纸就去读');
+  assert.match(rt, /if \(hasPictures\) content\.push/, '决定回复后就附上画面');
+
+  // 进闸门之前不能因为 text 是占位符就丢掉
+  assert.match(rt, /const hasPicture = \(message\.images\?\.length \?\? 0\) \+ \(message\.stickers\?\.length \?\? 0\) > 0/, 'accept 要识别图片或贴纸');
+  assert.match(rt, /message\.text\.trim\(\) \|\| hasPicture/, '带画面就放行到闸门');
+});
+
+
+
+
+test('生图：豆包返回的本地路径不能被丢', async () => {
+  const { extractImageUrls } = await import('../lib/imagegen.mjs');
+
+  // 2026-11-15 21:26 的真实回复（来自会话 seq=15）。
+  // 以前 extractImageUrls 只收 http(s)，这三个 C:/ 路径被整条丢掉，
+  // 于是判成 no_image，而图其实已经写在磁盘上。
+  const real = '已为你生成 3 张 3:4 的夜晚大学校园阳台视角图片。\n\n'
+    + '![豆包生图 1](C:/Users/csa/.dsh/doubao-images/doubao-2026-11-15T13-26-01-1.png)\n\n'
+    + '![豆包生图 2](C:/Users/csa/.dsh/doubao-images/doubao-2026-11-15T13-26-04-2.png)\n\n'
+    + '![豆包生图 3](C:/Users/csa/.dsh/doubao-images/doubao-2026-11-15T13-26-07-3.png)';
+  const got = extractImageUrls(real);
+  assert.equal(got.length, 3, '三张本地图都要认出来');
+  assert.ok(got[0].includes('doubao-2026-11-15T13-26-01-1.png'), '路径要完整');
+
+  // 带空格的路径：DSH 自己的 system prompt 要求用尖括号包起来
+  assert.deepEqual(extractImageUrls('![x](<C:/Users/csa/a b.png>)'), ['C:/Users/csa/a b.png']);
+
+  // http 照样收，且不能被裸链接正则重复抽成 s://
+  assert.deepEqual(extractImageUrls('![x](https://a.com/x.png)'), ['https://a.com/x.png']);
+
+  // 混合也要对
+  const mixed = extractImageUrls('图 ![a](C:/1.png) 和 ![b](https://a.com/2.png)');
+  assert.deepEqual(mixed, ['C:/1.png', 'https://a.com/2.png']);
+
+  // 非图片扩展名不收
+  assert.deepEqual(extractImageUrls('![a](C:/doc.txt)'), []);
+  // 重复只算一次
+  assert.equal(extractImageUrls('![a](C:/1.png) ![b](C:/1.png)').length, 1);
+});
+
+
+test('生图：从回复里抽图片链接', async () => {
+  const { extractImageUrls, buildImagePrompt, resolveImageRoute } = await import('../lib/imagegen.mjs');
+
+  // 豆包生图的返回形式：说明文字 + markdown 图片
+  const md = '生成图片：\n\n![生成的图片](https://p3-flow-imagex-sign.byteimg.com/xxx.jpeg)';
+  assert.deepEqual(extractImageUrls(md), ['https://p3-flow-imagex-sign.byteimg.com/xxx.jpeg']);
+
+  // HTML img 也要认
+  assert.deepEqual(
+    extractImageUrls('<img src="https://a.com/x.png">'),
+    ['https://a.com/x.png'],
+  );
+  // 裸链接：只在明确是图片扩展名时才收
+  assert.deepEqual(extractImageUrls('看这个 https://a.com/pic.webp 和 https://a.com/page'), ['https://a.com/pic.webp']);
+  // 重复图只算一次
+  assert.equal(extractImageUrls('![](https://a.com/1.png) ![](https://a.com/1.png)').length, 1);
+  // 没有图就是空数组，不能返回 null
+  assert.deepEqual(extractImageUrls('只有文字'), []);
+  assert.deepEqual(extractImageUrls(null), []);
+  // file:// 也收（豆包在别的形态下会给 file URL），但要看扩展名
+  assert.deepEqual(extractImageUrls('![](file:///C:/x.png)'), ['file:///C:/x.png']);
+
+  // 提示词：不能把用户没说的东西塞进去
+  const p = buildImagePrompt({ prompt: '一只橘猫', style: '水墨', aspectRatio: '16:9' });
+  assert.ok(p.includes('一只橘猫'), '主体要在');
+  assert.ok(p.includes('水墨'), '风格要在');
+  assert.ok(p.includes('16:9'), '比例要在');
+  assert.ok(!buildImagePrompt({ prompt: '   ' }), '空描述返回空串');
+  assert.ok(!buildImagePrompt({ prompt: '猫', aspectRatio: 'wide' }).includes('wide'), '不合法比例不要带上');
+
+  // 路由默认值
+  assert.deepEqual(resolveImageRoute({}), { provider: 'doubao', model: 'image-gen' });
+  assert.deepEqual(resolveImageRoute({ provider: 'x', model: 'y' }), { provider: 'x', model: 'y' });
+});
+
+test('生图：提示词真的告诉了她什么时候发图', async () => {
+  const { buildCapabilityGuide, CAPABILITY_RULES } = await import('../lib/capabilities.mjs');
+
+  // 开着生图工具时，指南里必须有这一条
+  const guide = buildCapabilityGuide({ allowed: ['qq_generate_image', 'qq_send_image'], kind: 'private' });
+  assert.ok(guide.includes('qq_generate_image'), '指南要列出生图工具');
+  assert.ok(guide.includes('你想让他看见'), '要说清楚什么时候用');
+  assert.ok(guide.includes('照片里有什么'), '要教怎么写描述');
+
+  // 不允许生图时，不能把它写进指南（否则模型会去调一个没有的工具）
+  const without = buildCapabilityGuide({ allowed: ['qq_status'], kind: 'private' });
+  assert.ok(!without.includes('qq_generate_image'), '没开就不该出现');
+
+  // 四条生图专用规则都要在
+  const joined = CAPABILITY_RULES.join(String.fromCharCode(10));
+  assert.ok(joined.includes('不用先征求同意'), '要说可以主动拍');
+  assert.ok(joined.includes('不是回答方式'), '要说别把发图当回答');
+  assert.ok(joined.includes('照片里不要有文字'), '要提醒别写字');
+  assert.ok(joined.includes('安静等它完成'), '要说不用报进度');
+
+  // 发图超时：图片不能用文本那个 15 秒上限
+  const onebot = read('lib/onebot.mjs');
+  assert.match(onebot, /Math\.max\(60_000/, '图片发送要至少 60 秒超时');
+  assert.match(onebot, /async call\(action, params = \{\}, signal, timeoutMs\)/, 'call 要支持单次超时覆盖');
+  assert.match(onebot, /timeoutMs \?\? this\.config\.timeoutMs/, '默认仍用配置值');
+});
+
+test('生图：她心里是「拍照」不是「画图」', async () => {
+  const { buildCapabilityGuide, CAPABILITY_RULES } = await import('../lib/capabilities.mjs');
+  const rt = read('lib/runtime.mjs');
+  const tl = read('lib/tools.mjs');
+  const guide = buildCapabilityGuide({ allowed: ['qq_generate_image'], kind: 'private' });
+  const rules = CAPABILITY_RULES.join(String.fromCharCode(10));
+
+  // 她有完整的生活（日程/穿搭/三餐），想给他看自己的午饭时应该是「拍一张」，
+  // 而不是「画一张」。工具实现是生图，但她的自我认知必须是拍照。
+  assert.ok(guide.includes('照片'), '指南要说照片');
+  assert.ok(!guide.includes('画张图，'), '指南不该再说画图');
+
+  assert.ok(rules.includes('想给他看照片时就拍'), '规则要用拍照');
+  assert.ok(rules.includes('照片里不要有文字'), '规则要说照片');
+  assert.ok(!rules.includes('图里不要有文字'), '不应残留画图措辞');
+
+  // 工具描述也得是拍照
+  assert.match(tl, /拍一张照片发给他/, '工具描述要说拍照');
+
+  // 人格层：拍照视角 + 跟随开关
+  assert.ok(rt.includes('你可以拍照发给他'), '人格层要有拍照自我认知');
+  // B3：人格层不只跟随开关，还要看这个会话有没有生图工具。
+  // 非管理员会话被 restrict 掉工具，但人格若仍说「你可以拍照」，
+  // 她就会应下来却发不出去。
+  assert.match(rt, /this\.config\.image\?\.enabled === true && \(!Array\.isArray\(allowedTools\) \|\| allowedTools\.includes\('qq_generate_image'\)\)/, '人格层要同时跟随开关与工具可用性');
+  assert.ok(rt.includes('guideTools'), '指南也要跟随开关');
+});
+
+
+test('生图：模块接线完整', () => {
+  const tools = read('lib/tools.mjs');
+  const rt = read('lib/runtime.mjs');
+  const cfg = read('lib/config.mjs');
+  const ui = read('lib/ui.mjs');
+  const cl = read('lib/client.js');
+  const cap = read('lib/capabilities.mjs');
+  const access = read('lib/access.mjs');
+
+  // 工具真的注册了，且会发图
+  assert.match(tools, /tool\('qq_generate_image'/, '要注册生图工具');
+  assert.match(tools, /runtime\.generateImageFor\(/, '要调 runtime');
+  assert.match(tools, /runtime\.sendImage\(/, '生完要发出去');
+
+  // runtime 真的走生图模块，并把图转成 data URL
+  assert.match(rt, /import \{ generateImage \} from '\.\/imagegen\.mjs'/, '要引入 imagegen');
+  assert.match(rt, /async generateImageFor\(/, '要有 generateImageFor');
+  assert.ok(rt.includes('data:') && rt.includes(';base64,'), '要转成 data URL');
+
+  // 配置段：存在且默认关闭
+  assert.match(cfg, /image: \{ enabled: false/, 'bootstrap 默认关');
+  assert.match(cfg, /image: \{/, 'normalizeConfig 要输出 image 段');
+
+  // 三份清单一致
+  assert.match(access, /'qq_generate_image'/, '白名单要有');
+  assert.match(cap, /tools: \['qq_generate_image'\]/, '能力指南要有');
+  assert.match(ui, /image: \['enabled'/, 'PATCHABLE 要有 image 段');
+  assert.match(ui, /runtime\.config\.image = normalized\.image/, '要热更新');
+  assert.match(ui, /image: raw\.image/, 'publicState 要回传');
+
+  // 面板
+  assert.match(cl, /h\(Card, \{ title: "生图" \}/, '要有生图卡片');
+  assert.match(cl, /imgEnabled, onChange/, '要有开关');
 });
 
 test('批量窗口内先发图再补文字，图片不能丢', async () => {
@@ -1574,34 +1755,44 @@ test('首次配置屏要有「遇到问题先重启」的安抚提示', () => {
   assert.ok(/[\(\)][\u00b4\u0300\u0e3f\u2022\u1d55]/.test(c) || c.includes('(´｡• ᵕ •｡`)'), '要有可爱颜文字');
 });
 
-test('教程要讲清「登录成功后怎样不再弹 WebUI」', () => {
+test('教程要讲清「启动时总是弹出 NapCat 网页」', () => {
   const c = read('lib/client.js');
-  // 用户要求：只要在教程里说明怎么关，不要求改代码逻辑
-  assert.ok(c.includes('每次启动 DSH 还是会弹 NapCat 的网页'), '要回应这个具体现象');
-  assert.ok(c.includes('这不是坏了'), '要先安抚，别让人以为是 bug');
-  // 三种关闭方式
-  assert.ok(c.includes('办法 1：在面板里点一下'), '要讲面板开关');
-  assert.ok(c.includes('办法 2：直接让 DSH 帮你改'), '要讲让 agent 改');
-  assert.ok(c.includes('办法 3：手动改文件'), '要讲手动改文件');
-  // 关键：要让用户知道改完要重启
-  assert.ok(c.includes('保存后要重启一次 DSH 才生效'), '要说明重启才生效');
-  // 给 agent 的那句话必须强调别动别的字段（文件里有 token）
+  assert.ok(c.includes('启动 DSH 时总是弹出 NapCat 网页'), '要有对应的小节标题');
+  assert.ok(c.includes('这通常不是登录异常'), '要先安抚，别让人以为是故障');
+  assert.ok(c.includes('方法一：在面板中修改'), '要讲面板开关');
+  assert.ok(c.includes('方法二：让 Agent 修改配置'), '要讲让 agent 改');
+  assert.ok(c.includes('方法三：手动修改'), '要讲手动改文件');
   assert.ok(c.includes('其它字段不要动'), '给 agent 的指令要防止误改 token');
 });
+
+test('教程要讲清生图依赖 dsh-connect-doubao', () => {
+  const c = read('lib/client.js');
+  // 本插件不含生图模型，全靠 dsh-connect-doubao 注册的豆包生图。
+  // 不写清楚的话，用户开了开关却画不出图，只会看到「没有找到生图路由」。
+  assert.ok(c.includes('使用前必须安装 dsh-connect-doubao'), '要写明前置插件');
+  assert.ok(c.includes('dsh plugin --profile desktop add dsh-connect-doubao'), '要给出安装命令');
+  assert.ok(c.includes('扫码登录豆包'), '要提醒登录豆包');
+  assert.ok(c.includes('没有找到生图路由'), '要说明没装时会报什么');
+  // 生图的几个可调项也必须在教程里出现，否则用户找不到
+  assert.ok(c.includes('每次最多发几张'), '要讲数量上限');
+  assert.ok(c.includes('image-gen'), '要讲默认模型名');
+});
+
 
 test('教程要讲天气 API Key 和各模块', () => {
   const c = read('lib/client.js');
   assert.ok(c.includes('和风天气'), '要讲天气 Key');
   assert.ok(c.includes('steamcommunity.com/dev/apikey'), '要讲 Steam Key 申请地址');
-  assert.ok(c.includes('Steam 的「游戏详情」隐私必须设为公开'), '要提醒游戏详情要公开');
-  assert.ok(c.includes('SteamID64 怎么找'), '要教怎么找 SteamID');
-  assert.ok(c.includes('改完配置一定要点最下方'), '要有保存按钮提醒');
+  assert.ok(c.includes('游戏详情」必须设为公开'), '要提醒游戏详情要公开');
+  assert.ok(c.includes('如何查找 SteamID64'), '要教怎么找 SteamID');
+  assert.ok(c.includes('一定要点击页面最下方的'), '要有保存按钮提醒');
   assert.ok(c.includes('dev.qweather.com'), '要给出注册地址');
-  assert.ok(c.includes('各模块是干什么的'), '要有模块总览');
+  assert.ok(c.includes('面板配置说明'), '要有模块总览');
   // Key 的真实校验规则，写进教程省得用户粘错
-  assert.ok(c.includes('8–128 位的字母、数字'), '要写清 Key 格式');
-  for (const mod of ['模型', '回复', '访问控制', '人格设定', 'NapCat', '会话与上下文', '虚拟生活与主动消息', '长期记忆与情感', '表情包', 'QQ 空间', '联网与天气', '归档']) {
-    assert.ok(c.includes('\"' + mod + '\"'), '缺少模块：' + mod);
+  assert.ok(c.includes('8–128 位'), '要写清 Key 格式');
+  // 模块总览必须覆盖面板上真实存在的卡片
+  for (const mod of ['模型', '自动回复', '链接解析', '虚拟人生', '主动发动态', '情感与关系', '长期记忆', '表情包', '回复节奏', 'Steam', '生图', '回复范围', 'NapCat', '归档', '会话与上下文', '虚拟生活与主动消息', '长期记忆与情感']) {
+    assert.ok(c.includes(mod), '缺少模块：' + mod);
   }
 });
 
@@ -1623,6 +1814,330 @@ test('面板顶部要有 GitHub 图标按钮（不明文显示链接）', () => 
   assert.ok(!/>\s*https:\/\/github\.com\/Applepinea\s*</.test(c), '不能把链接明文显示在界面上');
 });
 
+test('教程顶部的快速跳转：锚点与链接必须一一对应', () => {
+  const c = read('lib/client.js');
+  const ids = [...c.matchAll(/id: "(guide-[a-z]+)"/g)].map(m => m[1]);
+  const hrefs = [...c.matchAll(/href: "#(guide-[a-z]+)"/g)].map(m => m[1]);
+
+  assert.equal(ids.length, 8, '8 个章节都要有锚点');
+  assert.equal(hrefs.length, 8, '8 个跳转链接');
+  assert.deepEqual(hrefs, ids, '顺序要一致');
+  // 任何一个 href 指向不存在的 id，点下去就毫无反应 —— 教程长，这种失效最难发现
+  assert.equal(hrefs.filter(h => !ids.includes(h)).length, 0, '不能有失效链接');
+  assert.equal(ids.filter(x => !hrefs.includes(x)).length, 0, '不能有孤立的锚点');
+
+  // 跳转栏必须在「配置教程」标题之后、第一章之前
+  const iTitle = c.indexOf('"配置教程"');
+  const iJump = c.indexOf('"快速跳转"');
+  const iFirst = c.indexOf('"1. 修改配置前，先了解保存机制"');
+  assert.ok(iTitle > 0 && iJump > iTitle, '跳转栏要在标题之后');
+  assert.ok(iJump < iFirst, '跳转栏要在第一章之前');
+});
+
+
+test('说说配图：上传→拼 richval→发布带图，且权限可控', async () => {
+  const qz = read('lib/qzone-http.mjs');
+
+  // 上传走 base64 表单，不是 multipart —— 这是接口的真实形态，
+  // 如果以后有人「顺手」改成 FormData，这里会立刻红。
+  assert.match(qz, /const UPLOAD_URL = 'https:\/\/up\.qzone\.qq\.com\/cgi-bin\/upload\/cgi_upload_image'/, '上传地址');
+  assert.match(qz, /base64: '1'/, '要声明 base64 模式');
+  assert.match(qz, /picfile: Buffer\.from\(bytes\)\.toString\('base64'\)/, '图片按 base64 提交');
+
+  // 上传回的是 HTML 包着 callback({...})，不能用 JSONP 解包。
+  assert.match(qz, /async requestText\(/, '要有返回原始文本的通道');
+  assert.match(qz, /callback\\\(/, '要按 callback( 提取');
+  assert.match(qz, /ret\b.*!== 0|Number\(data\?\.ret/, '要检查 ret');
+
+  // richval 的拼法：逗号开头，多图重复同一段。
+  assert.match(qz, /buildRichval\(images\)/, '要有 richval 构造');
+  assert.match(qz, /\$\{i\.albumId\},\$\{i\.lloc\},\$\{i\.sloc\}/, 'richval 字段顺序');
+
+  // publish 要能吃 images 和 right
+  assert.match(qz, /async publish\(content, \{ signal, images = \[\], right \} = \{\}\)/, 'publish 签名');
+  assert.match(qz, /form\.ugc_right = n/, '权限写进 ugc_right');
+  assert.match(qz, /\[1, 4, 64, 128\]/, '只允许四个合法权限值');
+
+  // 带图响应里的 id 叫 t1_tid，不是 tid —— 只取 tid 会永远拿到空串。
+  assert.match(qz, /data\?\.tid \?\? data\?\.t1_tid/, '要兼容 t1_tid');
+
+  // 纯文字仍然不带 richtype
+  assert.match(qz, /form\.who = 1/, '纯文字走 who=1');
+});
+
+test('说说配图：配置、开关与失败降级', () => {
+  const cfg = read('lib/config.mjs');
+  const ui = read('lib/ui.mjs');
+  const rt = read('lib/runtime.mjs');
+  const cl = read('lib/client.js');
+
+  // 配置项存在且默认关闭
+  assert.match(cfg, /image: \{ enabled: false, maxImages: 1 \}/, 'qzoneProactive.image 默认值');
+  assert.match(cfg, /maxImages: integer\(raw\.qzoneProactive\?\.image\?\.maxImages, 1, 1, 3/, '张数范围 1–3');
+
+  // 白名单漏了 image 的话，面板保存会被静默丢弃。
+  assert.match(ui, /qzoneProactive: \[[^\]]*'image'[^\]]*\]/, 'ui 白名单要含 image');
+
+  // 运行时：生图没开就跳过，不刷日志噪音
+  assert.match(rt, /#qzonePostImages/, '要有配图方法');
+  assert.match(rt, /this\.config\.image\?\.enabled !== true/, '生图没开要跳过');
+  // 关键：配图失败不能让说说发不出去
+  assert.match(rt, /return \[\];/, '失败返回空数组');
+  assert.match(rt, /const images = await this\.#qzonePostImages\(pending\.text, signal\)/, '发布前取图');
+  assert.match(rt, /this\.qzone\.publish\(pending\.text, \{ signal, images, right: this\.qzoneRight\(\) \}\)/, '把图和可见范围一起传给 publish');
+
+  // 面板：开关 + 前置条件说明 + 生图关闭时警告
+  assert.ok(cl.includes('发说说时配一张图'), '开关文案');
+  assert.ok(cl.includes('dsh-connect-doubao'), '要写明前置依赖');
+  assert.ok(cl.includes('说说照发，只是没有图'), '要说明降级行为');
+  assert.match(cl, /form\.qzImage && !form\.imgEnabled/, '生图没开要给警告');
+});
+
+
+test('发 QQ 空间全程不启动浏览器', () => {
+  const qz = read('lib/qzone-http.mjs');
+  const rt = read('lib/runtime.mjs');
+  const nc = read('lib/napcat.mjs');
+
+  // 这条路径必须纯粹是 HTTP。曾经用 Playwright 驱动真实网页，
+  // 结果是：桌面弹窗、冷启动 30 秒超时、skey 几小时过期、评论落到错误的说说上。
+  // 任何人重新引入浏览器之前，这里会先红。
+  for (const banned of ['playwright', 'puppeteer', 'chromium', 'child_process', 'execFile', 'spawn(']) {
+    assert.ok(!qz.includes(banned), 'qzone-http.mjs 不应出现 ' + banned);
+  }
+  assert.match(qz, /await fetch\(/, '发说说必须走 fetch');
+
+  // 发布路径不能触碰任何「打开浏览器」的入口。
+  const publishBody = rt.slice(rt.indexOf('async #finishQzonePending'), rt.indexOf('async #composeQzonePost'));
+  assert.ok(!/openBrowser|openLoginBrowser/.test(publishBody), '发布路径不得开浏览器');
+
+  // 全库唯一会开浏览器的是 NapCat 登录，且必须受 autoOpenLogin 门控。
+  assert.match(nc, /if \(this\.openedLogin \|\| this\.attached \|\| !this\.config\.napcat\.autoOpenLogin\) return;/, 'NapCat 开浏览器要受开关门控');
+
+  // 教程里要明确回答这个疑问，否则用户只能靠观察猜。
+  const cl = read('lib/client.js');
+  assert.ok(cl.includes('会不会弹出浏览器窗口'), '教程要有这一节');
+  assert.ok(cl.includes('不启动任何浏览器'), '要明确说明不启动浏览器');
+});
+
+
+test('B21: 动态发布有在途锁，且空间接口超时不会被信号顶掉', () => {
+  const rt = read('lib/runtime.mjs');
+  const qz = read('lib/qzone-http.mjs');
+
+  // 轮询 60s、生图 120s，没有锁时同一轮会被两个 tick 各发一次。
+  assert.match(rt, /this\.qzoneBusy = false;/, '要初始化在途标志');
+  assert.match(rt, /async tickQzoneProactive\(signal\) \{[\s\S]{0,400}if \(this\.qzoneBusy \|\| this\.closed\) return;/, '入口要有守卫');
+  assert.match(rt, /#tickQzoneProactiveInner/, '真实逻辑要在内层');
+  assert.match(rt, /finally \{[\s\S]{0,120}this\.qzoneBusy = false;/, '异常也要解锁');
+
+  // 用 signal ?? timeout 的写法，在调用方永远传 shutdown.signal 时等于没有超时。
+  assert.ok(!qz.includes('signal: signal ?? AbortSignal.timeout'), '不能再用 ?? 写法');
+  assert.ok(qz.includes('combinedSignal(signal, Number(this.config.qzone?.timeoutMs'), '超时要与取消取交集');
+});
+
+test('B15: 并发热更新不能依赖「替换前后比较」', () => {
+  const rt = read('lib/runtime.mjs');
+  const ui = read('lib/ui.mjs');
+
+  // ui 先替换 config.reply，再调 applyHotConfig，所以拿 next 和 this.config 比恒为假。
+  assert.ok(!/nextConcurrency !== this\.config\.reply\.concurrency/.test(rt), '不能保留恒假的比较');
+  assert.match(rt, /this\.slots\?\.limit !== wantConcurrency/, '要直接比对 Semaphore 自己的上限');
+
+  // 同一类错误在 B19 上又踩了一次：imageWasEnabled 必须在覆盖 config 之前取。
+  const iFlag = ui.indexOf('const imageWasEnabled');
+  const iAssign = ui.indexOf('runtime.config.image = normalized.image;');
+  assert.ok(iFlag > 0 && iAssign > 0 && iFlag < iAssign, 'imageWasEnabled 要在替换之前读');
+});
+
+test('B19: 开关生图要能热重建工具集', () => {
+  const idx = read('index.mjs');
+  const ui = read('lib/ui.mjs');
+  assert.match(idx, /const registerTools = \(\) => \{/, '要有重建函数');
+  assert.match(idx, /runtime\.reregisterTools = registerTools/, '要挂到 runtime 上');
+  assert.match(idx, /registerTools\(\);/, '启动时要注册一次');
+  assert.match(ui, /runtime\.reregisterTools\?\.\(\)/, '开关变化要触发重建');
+});
+
+test('B12: 拍照规则只发给真的能拍的会话', async () => {
+  const { buildCapabilityGuide, PHOTO_RULES } = await import('../lib/capabilities.mjs');
+  const rule = PHOTO_RULES[0];
+  const withTool = buildCapabilityGuide({ allowed: ['qq_generate_image'], kind: 'private' });
+  const without = buildCapabilityGuide({ allowed: ['qq_status', 'qq_read_history'], kind: 'private' });
+  assert.ok(withTool.includes(rule), '能拍时要有拍照规则');
+  assert.ok(!without.includes(rule), '不能拍时必须收起拍照规则');
+});
+
+test('B20: 同一条消息里的贴纸不能被当成照片', async () => {
+  const { batchTrigger } = await import('../lib/util.mjs');
+  const batch = [{ text: '', images: [{ url: '/a.png' }], stickers: [{ url: '/s.png' }] }, { text: '看看' }];
+  const t = batchTrigger(batch, 4);
+  assert.deepEqual((t.images ?? []).map((x) => x.url), ['/a.png'], '图只能进 images');
+  assert.deepEqual((t.stickers ?? []).map((x) => x.url), ['/s.png'], '贴纸只能进 stickers');
+});
+
+test('B16: cleanImageText 不能把本机路径漏进正文', async () => {
+  const { cleanImageText } = await import('../lib/runtime.mjs');
+  const out = cleanImageText('画好了 C:/Users/someone/.dsh/doubao-images/a.png 看吧');
+  assert.ok(!out.includes('C:/'), 'Windows 路径要被剥掉');
+  const out2 = cleanImageText('看 file:///C:/x/y.png 这张');
+  assert.ok(!out2.includes('file://'), 'file:// 要被剥掉');
+});
+
+test('B10: access.mjs 文件头不能重复', () => {
+  const a = read('lib/access.mjs');
+  const count = (a.match(/Every tool this plugin registers\./g) || []).length;
+  assert.equal(count, 1, '文件头只应出现一次');
+});
+
+
+test('B23: 手动发布也要走在途锁', () => {
+  const rt = read('lib/runtime.mjs');
+  // 锁只包住定时轮询时，配图期间点「立即发一条」会和正在跑的那次并行发布。
+  const from = rt.indexOf('async postQzoneNow');
+  const body = rt.slice(from, from + 1600);
+  assert.match(body, /if \(this\.qzoneBusy\) \{/, '忙时要直接返回');
+  assert.match(body, /status: 'busy'/, '要给出明确的忙状态');
+  assert.match(body, /this\.qzoneBusy = true;/, '要占用锁');
+  assert.match(body, /finally \{[\s\S]{0,120}this\.qzoneBusy = false;/, '异常也要解锁');
+});
+
+test('B11: 生图工具的墙钟预算要大于它自己的超时', () => {
+  const tl = read('lib/tools.mjs');
+  assert.match(tl, /const budgetFor = \(toolName\) => \{/, '要有按工具算预算');
+  assert.match(tl, /imageTimeoutMs \+ 30_000/, '生图预算 = 超时 + 余量');
+  // 固定 120s 会把生图自己的 120s 超时吃干净，发送那一步就没时间了。
+  assert.ok(!tl.includes("name.startsWith('qq_qzone') ? 150_000 : 120_000"), '不能再固定 120s');
+});
+
+test('B14: 只有 attachmentId 的附件也要能读出来', () => {
+  const rt = read('lib/runtime.mjs');
+  assert.match(rt, /async attachmentBytes\(attachment, signal\)/, '要有按 id 解析');
+  assert.match(rt, /attachment\.attachmentId/, '要认宿主给的 attachmentId');
+  assert.match(rt, /attachments\.imageHostPath/, '优先用 imageHostPath 拿路径');
+  assert.match(rt, /attachments\.readImage/, '再回退到 readImage');
+  assert.match(rt, /await this\.attachmentBytes\(part\?\.attachment, ioSignal\)/, 'case A 要真的用它');
+});
+
+test('B13: 生图开关变化要重建聊天会话', () => {
+  const ui = read('lib/ui.mjs');
+  const body = ui.slice(ui.indexOf('if ((normalized.image?.enabled === true) !== imageWasEnabled)'));
+  assert.match(body.slice(0, 1200), /runtime\.dropSessions\?\.\(\)/, '要丢掉旧会话，否则 restrict 和人格还是旧的');
+});
+
+test('B17: accept 的注释不能再和闸门相反', () => {
+  const rt = read('lib/runtime.mjs');
+  assert.ok(!rt.includes('而那恰恰是最需要回应的情形'), '要删掉「纯图最该回」的说法');
+  assert.ok(rt.includes('图不参与闸门打分'), '要写明图不参与打分');
+});
+
+test('B12 残留: ownerHarnessTools 放开工具时也要看生图开关', async () => {
+  const { buildCapabilityGuide, PHOTO_RULES } = await import('../lib/capabilities.mjs');
+  const rule = PHOTO_RULES[0];
+  // allowed=null 表示「不限制工具」，只看 permitted 会恒为真。
+  const off = buildCapabilityGuide({ allowed: null, kind: 'private', photo: false });
+  const on = buildCapabilityGuide({ allowed: null, kind: 'private', photo: true });
+  assert.ok(!off.includes(rule), '生图关时不能出现拍照规则');
+  assert.ok(on.includes(rule), '生图开时要有拍照规则');
+});
+
+test('B16 残留: POSIX 绝对路径也要剥，但不能误伤普通斜杠', async () => {
+  const { cleanImageText } = await import('../lib/runtime.mjs');
+  assert.ok(!cleanImageText('存在 /home/user/pic.jpg 里').includes('/home/'), 'POSIX 路径要剥掉');
+  assert.ok(cleanImageText('比例是 1/2 而已').includes('1/2'), '普通斜杠不能误伤');
+  assert.ok(cleanImageText('今天是 11/16 号').includes('11/16'), '日期不能误伤');
+});
+
+
+test('说说可见范围：配置、解析、两处发布入口都接线', async () => {
+  const { resolveRight, QZONE_RIGHTS } = await import('../lib/qzone-http.mjs');
+  const cfg = read('lib/config.mjs');
+  const ui = read('lib/ui.mjs');
+  const rt = read('lib/runtime.mjs');
+  const tl = read('lib/tools.mjs');
+  const cl = read('lib/client.js');
+
+  // 编码是抓包核对过的，改了就等于把说说发到错误的可见范围。
+  assert.deepEqual(QZONE_RIGHTS, { public: 1, friends: 4, private: 64, close: 128 }, 'ugc_right 编码');
+
+  // default 必须返回 undefined（= 不传字段），不能返回某个数字。
+  assert.equal(resolveRight('default'), undefined, 'default 表示不传');
+  assert.equal(resolveRight(''), undefined, '空值表示不传');
+  assert.equal(resolveRight('public'), 1);
+  assert.equal(resolveRight('friends'), 4);
+  assert.equal(resolveRight('private'), 64);
+  // 手工写数字也认
+  assert.equal(resolveRight('128'), 128);
+  // 非法值必须抛，静默退回默认会让人以为设置生效了
+  assert.throws(() => resolveRight('nope'), '非法值要抛');
+
+  // 配置：默认 default，且不提供 close（服务端要求指定人，发不出去）
+  assert.match(cfg, /right: 'default' \}/, '默认 right=default');
+  assert.match(cfg, /\['default', 'public', 'friends', 'private'\]/, '不提供 close');
+  assert.ok(!/allowed = \[[^\]]*'close'/.test(cfg), 'close 不能进白名单');
+
+  // 白名单漏了 right 的话，面板保存会被静默丢弃
+  assert.match(ui, /qzoneProactive: \[[^\]]*'right'[^\]]*\]/, 'ui 白名单要含 right');
+
+  // 两个发布入口必须用同一个值，否则「设成仅自己可见」后模型自己发的仍是公开
+  assert.match(rt, /qzoneRight\(\) \{/, 'runtime 要暴露 qzoneRight');
+  assert.match(rt, /this\.qzone\.publish\(pending\.text, \{ signal, images, right: this\.qzoneRight\(\) \}\)/, '动态发布要带 right');
+  assert.match(tl, /runtime\.qzone\.publish\(text, \{ signal: exec\.signal, right: runtime\.qzoneRight\(\) \}\)/, '工具发布也要带 right');
+
+  // 面板：下拉 + 选项 + 仅自己可见时的提醒
+  assert.ok(cl.includes('说说可见范围'), '面板要有这一项');
+  for (const v of ['default', 'public', 'friends', 'private']) {
+    assert.ok(cl.includes('value: "' + v + '"'), '缺少选项 ' + v);
+  }
+  assert.ok(!cl.includes('value: "close"'), '不该提供仅密友可见');
+});
+
+
+test('B24: 手动发布必须先占锁再落盘，忙时一个字都不写', () => {
+  const rt = read('lib/runtime.mjs');
+  const ui = read('lib/ui.mjs');
+  const tl = read('lib/tools.mjs');
+
+  const from = rt.indexOf('async postQzoneNow');
+  const body = rt.slice(from, from + 1800);
+
+  // 顺序是重点：qzoneBusy 必须在 setPending 之前置位，
+  // 否则「检查没 pending → 落盘 → 发现锁被占」会把一条没人管的 pending 留在库里。
+  const iLock = body.indexOf('this.qzoneBusy = true;');
+  const iPending = body.indexOf('await state.setPending(');
+  const iBusyReturn = body.indexOf("status: 'busy'");
+  assert.ok(iLock > 0 && iPending > 0 && iBusyReturn > 0, '三段都要在');
+  assert.ok(iBusyReturn < iLock, '忙分支要在占锁之前返回');
+  assert.ok(iLock < iPending, '必须先占锁再落盘');
+
+  // 锁内要复查 pending：拿锁前可能已经积压了一条
+  assert.match(body, /if \(state\.pending\) \{/, '锁内要复查 pending');
+
+  // 调用方不能再自己 setPending
+  // 'clear' 在文件里出现得比 'post' 早，不能用它当结尾标记。
+  const iUiPost = ui.indexOf("if (action === 'post')");
+  const uiPost = ui.slice(iUiPost, iUiPost + 3000);
+  assert.ok(!uiPost.includes('state.setPending('), '面板不能再自己落盘');
+  assert.match(uiPost, /runtime\.postQzoneNow\(\{/, '面板要调用原子入口');
+  assert.match(uiPost, /if \(outcome\?\.status === 'busy'\)[\s\S]{0,300}json\(res, 409/, 'busy 要回 409');
+
+  const tlPost = tl.slice(tl.indexOf("tool('qq_qzone_post_now'"), tl.indexOf("tool('qq_qzone_comment'"));
+  assert.ok(!tlPost.includes('state.setPending('), '工具不能再自己落盘');
+  assert.match(tlPost, /runtime\.postQzoneNow\(\{/, '工具要调用原子入口');
+  // busy 不能并进 uncertain 的措辞
+  assert.match(tlPost, /status === 'busy'/, 'busy 要单独分支');
+  assert.ok(tlPost.includes('没有发出去'), 'busy 要明说没发出去');
+});
+
+test('B24: 账本里 busy 必须可重试，否则重试永远拿回同一个 busy', () => {
+  const st = read('lib/store.mjs');
+  assert.match(st, /entry\.status === 'busy'/, 'busy 要进可重试名单');
+  // 反例：不在可重试名单时，会走到 duplicate 短路，模型重试永远无效。
+  const guard = st.slice(st.indexOf('const retriable ='), st.indexOf('const retriable =') + 400);
+  assert.ok(guard.includes("'busy'"), 'retriable 判断里要有 busy');
+});
+
+
 test('面板要有「配置教程」入口', () => {
   const c = read('lib/client.js');
   assert.ok(c.includes('showGuide'), '要有展开状态');
@@ -1630,7 +2145,7 @@ test('面板要有「配置教程」入口', () => {
   // 首次配置流程已从教程里移除
   assert.ok(!c.includes('① 首次配置'), '教程里不该再有首次配置流程');
   // 「改坏了怎么办」要提醒备份而不是直接删（文件里有 token）
-  assert.ok(c.includes('别直接删 config.json'), '不能教用户直接删配置');
+  assert.ok(c.includes('不要直接删除 config.json') || c.includes('别直接删 config.json'), '不能教用户直接删配置');
   assert.ok(c.includes('config.json.bak'), '要教改名备份');
 });
 

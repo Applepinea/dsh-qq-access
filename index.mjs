@@ -75,8 +75,30 @@ export async function apply(ctx, config = {}) {
     await step('background', () => background, 2000);
   });
   const disposers = [];
+  // B19：工具集必须能在热更新时重建。
+  //
+  // makeTools() 在调用时读 runtime.config，而 qq_generate_image 是否注册
+  // 取决于 image.enabled。以前只在启动时注册一次，于是：
+  // 面板里打开生图 → 能力指南里已经有「你可以拍照」，但工具根本没注册，
+  // 她要等到重启才能拍 —— 中间这段时间只会说「我拍不了」。
+  // 反过来，关掉生图后工具也还留着，调到就是一句 disabled。
+  let toolDisposers = [];
+  const registerTools = () => {
+    for (const dispose of toolDisposers) { try { dispose?.(); } catch { /* 已销毁 */ } }
+    toolDisposers = [];
+    for (const definition of makeTools(runtime)) {
+      toolDisposers.push(ctx.tools.register(definition));
+    }
+  };
+  // 面板保存时通过 runtime 调它，避免 ui.mjs 直接碰 ctx。
+  runtime.reregisterTools = registerTools;
+  disposers.push(() => {
+    runtime.reregisterTools = null;
+    for (const dispose of toolDisposers) { try { dispose?.(); } catch { /* 已销毁 */ } }
+    toolDisposers = [];
+  });
   try {
-    for (const definition of makeTools(runtime)) disposers.push(ctx.tools.register(definition));
+    registerTools();
     disposers.push(ctx.tools.guard(exec => runtime.access.guard(exec)));
     if (resolved.napcat.mode === 'managed') {
       manager = new NapcatManager(resolved, { client: runtime.client, logger });
