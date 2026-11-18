@@ -2138,6 +2138,115 @@ test('B24: 账本里 busy 必须可重试，否则重试永远拿回同一个 bu
 });
 
 
+test('生图只收模型自己的输出，不能把用户 prompt 当成结果', () => {
+  const ig = read('lib/imagegen.mjs');
+
+  // 会话里一定有我们 followup 出去的那句 prompt。不过滤角色时：
+  // prompt 里带图片链接 → 被当成生图结果发出去；空回合 → 误报「回了话但没有图」。
+  assert.match(ig, /function collectReply\(agent, \{ baselineSeq = 0 \} = \{\}\)/, 'collectReply 要接 baselineSeq');
+  assert.match(ig, /if \(event\?\.type && event\.type !== 'assistant\/message'\) continue;/, '要过滤事件类型');
+  assert.match(ig, /if \(role && role !== 'assistant'\) continue;/, '要过滤消息角色');
+  assert.match(ig, /for \(let i = start; i < end; i\+\+\)/, '只扫 baseline 之后的事件');
+
+  // waitIdle 用 seq > 0 判断时，用户那条 prompt 就已经让 seq 变成 1 了。
+  assert.match(ig, /if \(seq > baseline\) break;/, 'waitIdle 要以 baseline 为基准');
+  assert.match(ig, /if \(seqAfterStart <= baseline\)/, '没超过 baseline 算没开始');
+  assert.match(ig, /const baselineSeq = Number\.isInteger\(handle\.agent\?\.session\?\.seq\)/, '要在 followup 之前取 baseline');
+  assert.match(ig, /const produced = reply\.rawTypes\.length > 0;/, '空回合判断要基于过滤后的产出');
+});
+
+test('负数 message_id 在全部工具里都放行', () => {
+  const tl = read('lib/tools.mjs');
+  // 32 位溢出会产生负数 id；只要有一处还是旧正则，那条路径就永远报错。
+  // 只看「message_id 必须…」这类断言，别把 before_seq 那种分页序号算进来。
+  const idAsserts = tl.split('\n').filter((l) => l.includes('message_id 必须'));
+  assert.ok(idAsserts.length >= 3, 'message_id 断言至少 3 处');
+  for (const line of idAsserts) {
+    assert.ok(line.includes('-?'), '这条还没放行负数：' + line.trim());
+  }
+});
+
+test('改名片与禁言要过群黑名单', () => {
+  const tl = read('lib/tools.mjs');
+  for (const name of ['qq_set_group_card', 'qq_group_ban']) {
+    const start = tl.indexOf("tool('" + name + "'");
+    assert.ok(start > 0, name + ' 未找到');
+    const body = tl.slice(start, start + 1200);
+    assert.match(body, /access\.target\(\{ kind: 'group', peer_id: args\.group_id \}/, name + ' 要走 access.target');
+    assert.ok(!/const groupId = qqId\(args\.group_id/.test(body), name + ' 不能只用 qqId');
+  }
+});
+
+test('面板能存能读 thoughts 与 qzone，且有热更新', () => {
+  const ui = read('lib/ui.mjs');
+  assert.match(ui, /thoughts: \['enabled', 'inject', 'limit', 'maxAgeHours'\]/, 'thoughts 白名单');
+  assert.match(ui, /qzone: \['enabled', 'timeoutMs', 'cookieTtlMs'\]/, 'qzone 白名单');
+  assert.match(ui, /thoughts: raw\.thoughts \?\? \{\}/, '/state 要回传 thoughts');
+  assert.match(ui, /qzone: raw\.qzone \?\? \{\}/, '/state 要回传 qzone');
+  assert.match(ui, /runtime\.config\.thoughts = normalized\.thoughts/, 'thoughts 热更新');
+  assert.match(ui, /runtime\.config\.qzone = normalized\.qzone/, 'qzone 热更新');
+});
+
+test('小红书短链复用已取回的正文，不再二次请求', () => {
+  const p = read('lib/parser.mjs');
+  assert.match(p, /if \(!page\) page = await helpers\.fetchText\(target/, '短链已取过正文时要复用');
+  // fetchText 是 redirect:error，落地页再有一次跳转就会失败
+  assert.ok(p.includes("redirect: 'error'"), 'fetchText 仍然禁止跳转（这个前提没变）');
+});
+
+test('Steam 绑定兼容单个对象的历史格式', () => {
+  const st = read('lib/steam-binding.mjs');
+  assert.match(st, /\(raw\.steamId \? \[raw\] : \[\]\)/, '单个绑定对象要能读出来');
+});
+
+
+test('分段：代码块与行内代码不能被逗号切碎', async () => {
+  const { splitSegments } = await import('../lib/runtime.mjs');
+  const BT = String.fromCharCode(96);
+  const FENCE = BT.repeat(3);
+
+  // 以前按「换行 / 中文逗号 / 英文逗号」一刀切，
+  // def foo(a, b, c): 会散成三条消息，代码没法看。
+  const fenced = '看这个：\n' + FENCE + 'python\ndef foo(a, b, c):\n    return a, b\n' + FENCE + '\n懂了吧';
+  const segs = splitSegments(fenced);
+  const code = segs.find((x) => x.includes(FENCE));
+  assert.ok(code, '代码块要完整出现在某一段里');
+  assert.ok(code.includes('def foo(a, b, c):'), '函数签名不能被切开');
+  assert.ok(code.includes('return a, b'), '函数体内的逗号也不能切');
+
+  // 行内代码同理
+  const inline = '调用 ' + BT + 'f(a, b)' + BT + ' 就行，试试';
+  const segs2 = splitSegments(inline);
+  assert.ok(segs2.some((x) => x.includes(BT + 'f(a, b)' + BT)), '行内代码要整块保留');
+
+  // 普通聊天仍然照切
+  assert.deepEqual(splitSegments('在呢，刚忙完，怎么了'), ['在呢', '刚忙完', '怎么了']);
+  // 数字里的逗号要保留（老逻辑不能回退）
+  assert.deepEqual(splitSegments('一共 1,000 元，够吗'), ['一共 1,000 元', '够吗']);
+});
+
+test('分段：commaSplit 关闭后只按换行切', async () => {
+  const { splitSegments } = await import('../lib/runtime.mjs');
+  const text = '在呢，刚忙完，怎么了\n第二行也，有逗号';
+  assert.deepEqual(splitSegments(text, 2000, 8, { commaSplit: false }), ['在呢，刚忙完，怎么了', '第二行也，有逗号']);
+  // 默认（不传）保持旧行为
+  assert.equal(splitSegments('a，b').length, 2);
+});
+
+test('commaSplit 配置贯通：默认开、可关、可存', () => {
+  const cfg = read('lib/config.mjs');
+  const ui = read('lib/ui.mjs');
+  const rt = read('lib/runtime.mjs');
+  const cl = read('lib/client.js');
+
+  assert.match(cfg, /commaSplit: true/, '默认值要开');
+  assert.match(cfg, /commaSplit: raw\.reply\?\.commaSplit !== false/, '归一化：缺省为开');
+  assert.match(ui, /'timeoutMs', 'commaSplit'\]/, '面板保存白名单要含它');
+  const n = (rt.match(/commaSplit: this\.config\.reply\?\.commaSplit !== false/g) || []).length;
+  assert.equal(n, 2, '两个分段调用点都要传配置');
+  assert.ok(cl.includes('按逗号分段'), '面板要有开关');
+});
+
 test('面板要有「配置教程」入口', () => {
   const c = read('lib/client.js');
   assert.ok(c.includes('showGuide'), '要有展开状态');
