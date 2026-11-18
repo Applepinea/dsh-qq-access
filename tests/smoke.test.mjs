@@ -2082,7 +2082,7 @@ test('说说可见范围：配置、解析、两处发布入口都接线', async
   // 两个发布入口必须用同一个值，否则「设成仅自己可见」后模型自己发的仍是公开
   assert.match(rt, /qzoneRight\(\) \{/, 'runtime 要暴露 qzoneRight');
   assert.match(rt, /this\.qzone\.publish\(pending\.text, \{ signal, images, right: this\.qzoneRight\(\) \}\)/, '动态发布要带 right');
-  assert.match(tl, /runtime\.qzone\.publish\(text, \{ signal: exec\.signal, right: runtime\.qzoneRight\(\) \}\)/, '工具发布也要带 right');
+  assert.match(tl, /runtime\.postQzoneNow\(\{ text, slotId: 'tool:' \+ id \}\)/, '工具发布也要走统一的配图/权限路径');
 
   // 面板：下拉 + 选项 + 仅自己可见时的提醒
   assert.ok(cl.includes('说说可见范围'), '面板要有这一项');
@@ -2297,7 +2297,7 @@ test('发送链路：有图/表情时走 sendSegments，归档存可见文字', 
 
   const ob = read('lib/onebot.mjs');
   assert.match(ob, /sendSegments\(kind, peerId, segments, signal, mentions = \[\]\)/, '要有 sendSegments');
-  assert.match(ob, /const timeoutMs = hasImage \? Math\.max\(60_000, this\.config\.timeoutMs\) : undefined;/, '带图要用图片超时');
+  assert.match(ob, /hasImage \? Math\.max\(60_000/, '带图要用图片超时');
 });
 
 test('上下文失效必须上报，不能被吞成一条普通失败', () => {
@@ -2316,6 +2316,47 @@ test('上下文失效必须上报，不能被吞成一条普通失败', () => {
   // 原有的「只在第一次记」的保护还在
   assert.match(rt, /if \(this\.#inactiveSeen\) return true;/, '重复上报要短路');
   assert.match(rt, /Promise\.resolve\(\)\.then\(\(\) => this\.stop\(\)\)/, '首次要停掉后台');
+});
+
+test('qq_qzone_publish 与 post_now 行为一致：配图/权限/在途锁共用一条路', () => {
+  const tl = read('lib/tools.mjs');
+
+  // 开了「说说配图」之后，模型调 publish 和 post_now 必须得到同样带图的说说。
+  // 以前 publish 直接 qzone.publish(text)，绕过了配图；用户会以为功能坏了。
+  const start = tl.indexOf("tool('qq_qzone_publish'");
+  const body = tl.slice(start, start + 1500);
+  assert.match(body, /runtime\.postQzoneNow\(\{ text, slotId: 'tool:' \+ id \}\)/, '必须走统一入口');
+  assert.ok(!body.includes('qzone.publish(text,'), '不能再直接 publish');
+  assert.match(body, /status === 'busy'/, '忙状态要单独说明');
+});
+
+test('sendSegments 只能有一个定义，且同时具备深拷贝与图片超时', async () => {
+  const ob = read('lib/onebot.mjs');
+  const defs = (ob.split('sendSegments(kind, peerId, segments').length - 1);
+  assert.equal(defs, 1, '重复方法定义会让后一个静默覆盖前一个');
+  const { OneBotClient } = await import('../lib/onebot.mjs');
+  const fn = OneBotClient.prototype.sendSegments.toString();
+  assert.ok(fn.includes('...(seg.data'), '深拷贝不能丢（复读要用原始段）');
+  assert.ok(fn.includes('60_000'), '带图要用更长的超时，不能被 15 秒掐断');
+});
+
+test('引用图片消息时，被引用消息的图也要进视觉上下文', () => {
+  const rt = read('lib/runtime.mjs');
+
+  // 「这里面写了啥」引用的是一张图时，以前只拿到 [图片] 占位符，
+  // 她只能回答「就显示一个图片的框」。
+  assert.match(rt, /async quotedContext\(replyId\)[\s\S]{0,1800}const normalized = normalizeEvent/, '引用上下文要解析原始消息段');
+  assert.match(rt, /return \{ messageId: String\(replyId\), senderId, nickname, text: rendered, images, stickers \}/, '引用对象要带图');
+  assert.match(rt, /const quotedPictures = \[/, '回复时要把引用的图并进来');
+  assert.match(rt, /message\.images = \[\.\.\.\(message\.images \?\? \[\]\), \.\.\.quotedPictures\]/, '合并到 images');
+});
+
+test('图片下载要走内网地址黑名单', () => {
+  const rt = read('lib/runtime.mjs');
+  assert.match(rt, /import \{ blockedHost \} from '\.\/parser\.mjs'/, '要复用已有的黑名单');
+  // redirect:error 只拦「跳到内网」，不拦「直接给内网 URL」
+  const calls = (rt.match(/blockedHost\(/g) || []).length;
+  assert.ok(calls >= 2, 'imageBytes 与 resolveImageSource 都要检查');
 });
 
 test('面板要有「配置教程」入口', () => {
