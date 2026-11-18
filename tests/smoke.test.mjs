@@ -2300,6 +2300,24 @@ test('发送链路：有图/表情时走 sendSegments，归档存可见文字', 
   assert.match(ob, /const timeoutMs = hasImage \? Math\.max\(60_000, this\.config\.timeoutMs\) : undefined;/, '带图要用图片超时');
 });
 
+test('上下文失效必须上报，不能被吞成一条普通失败', () => {
+  const rt = read('lib/runtime.mjs');
+
+  // 实机教训：DSH 重载后 ctx 失效，主动消息的定时器还挂在旧实例上，
+  // 每一轮都在 tickProactive 的 catch 里被吞掉、返回 {ok:false}，
+  // 外层 #noteInactiveContext（本来负责 stop 掉后台）永远收不到 ——
+  // 于是每分钟刷一条，两小时刷了 144 条。
+  assert.match(rt, /if \(\/inactive context\/i\.test\(String\(error\?\.message \?\? error\)\)\) \{/, '要识别上下文失效');
+  assert.match(rt, /this\.#noteInactiveContext\(error\);\s*\n\s*throw error;/, '识别后要上报并抛出');
+
+  // 已经 stop 的实例不能再挂定时器，否则只会空转报错。
+  assert.match(rt, /if \(this\.closed \|\| this\.shutdown\.signal\.aborted\) return;/, 'armPollTimer 要检查是否已关闭');
+
+  // 原有的「只在第一次记」的保护还在
+  assert.match(rt, /if \(this\.#inactiveSeen\) return true;/, '重复上报要短路');
+  assert.match(rt, /Promise\.resolve\(\)\.then\(\(\) => this\.stop\(\)\)/, '首次要停掉后台');
+});
+
 test('面板要有「配置教程」入口', () => {
   const c = read('lib/client.js');
   assert.ok(c.includes('showGuide'), '要有展开状态');
