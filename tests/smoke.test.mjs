@@ -2247,6 +2247,59 @@ test('commaSplit 配置贯通：默认开、可关、可存', () => {
   assert.ok(cl.includes('按逗号分段'), '面板要有开关');
 });
 
+test('正文里的图片地址要发成真图，不能发成链接', async () => {
+  const { parseRichText, segmentsToText } = await import('../lib/onebot.mjs');
+
+  // Markdown 图片
+  const md = parseRichText('看这个 ![自拍](https://x.com/a.png) 好看吗');
+  assert.deepEqual(md.map((p) => p.type), ['text', 'image', 'text'], 'markdown 要变成 image 段');
+  assert.equal(md[1].data.file, 'https://x.com/a.png');
+
+  // 裸图片地址
+  const bare = parseRichText('给你 https://x.com/b.jpg 这个');
+  assert.ok(bare.some((p) => p.type === 'image' && p.data.file === 'https://x.com/b.jpg'), '裸图片地址要变 image 段');
+
+  // 非图片链接保持文字（不能把所有 http 都当图）
+  const page = parseRichText('参考 https://example.com/article 这篇');
+  assert.equal(page.length, 1, '普通链接要原样保留');
+  assert.equal(page[0].type, 'text');
+
+  // 归档文字用占位符，不要存原始地址
+  assert.equal(segmentsToText(md), '看这个 [图片] 好看吗');
+});
+
+test('正文里的 [偷笑] 要发成真表情，但 [0] 不能', async () => {
+  const { parseRichText, segmentsToText } = await import('../lib/onebot.mjs');
+
+  const face = parseRichText('好耶[偷笑]真的');
+  assert.deepEqual(face.map((p) => p.type), ['text', 'face', 'text'], '[偷笑] 要变成 face 段');
+  assert.equal(face[1].data.id, '20', '偷笑 = 20');
+
+  // 纯数字方括号更像数组下标，不能当表情
+  const arr = parseRichText('数组 a[0] 越界了');
+  assert.equal(arr.length, 1, '[0] 要保持文字');
+  assert.ok(arr[0].data.text.includes('[0]'));
+
+  // 不认识的名字也保持文字
+  const unknown = parseRichText('这个[不存在的表情]算了');
+  assert.equal(unknown.length, 1);
+
+  assert.equal(segmentsToText(face), '好耶[偷笑]真的');
+});
+
+test('发送链路：有图/表情时走 sendSegments，归档存可见文字', () => {
+  const rt = read('lib/runtime.mjs');
+  assert.match(rt, /const parts = parseRichText\(body\);/, '发送前要解析');
+  assert.match(rt, /const hasRich = parts\.some/, '要判断是否含富内容');
+  assert.match(rt, /this\.client\.sendSegments\(kind, peerId, parts, signal, targets\)/, '富内容走分段发送');
+  assert.match(rt, /part\.data\.file = await this\.resolveImageSource\(part\.data\.file, signal\)/, '图片要先转 data URL');
+  assert.match(rt, /text: hasRich \? \(segmentsToText\(parts\) \|\| body\) : body,/, '归档存可见文字');
+
+  const ob = read('lib/onebot.mjs');
+  assert.match(ob, /sendSegments\(kind, peerId, segments, signal, mentions = \[\]\)/, '要有 sendSegments');
+  assert.match(ob, /const timeoutMs = hasImage \? Math\.max\(60_000, this\.config\.timeoutMs\) : undefined;/, '带图要用图片超时');
+});
+
 test('面板要有「配置教程」入口', () => {
   const c = read('lib/client.js');
   assert.ok(c.includes('showGuide'), '要有展开状态');
