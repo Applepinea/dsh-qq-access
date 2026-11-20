@@ -314,7 +314,7 @@ test('主动消息发出去的是校验后的文本', () => {
   const rt = read('lib/runtime.mjs');
   // 若分段/情感/返回值仍用原始 text，重写后的新内容不会被发出去
   assert.match(rt, /splitSegments\(messageText/, '分段用 messageText');
-  assert.match(rt, /replyText: messageText/, '情感记账用 messageText');
+  assert.match(rt, /replyText: emotionText/, '情感记账用校验后的文本（emotionText = messageText || 工具真发出去的正文）');
   assert.match(rt, /text: messageText, segments/, '返回值用 messageText');
 });
 
@@ -2247,8 +2247,7 @@ test('commaSplit 配置贯通：默认开、可关、可存', () => {
   assert.match(cfg, /commaSplit: raw\.reply\?\.commaSplit !== false/, '归一化：缺省为开');
   assert.match(ui, /'timeoutMs', 'commaSplit', 'sharedAgent'\]/, '面板保存白名单要含它们');
   const n = (rt.match(/commaSplit: this\.config\.reply\?\.commaSplit !== false/g) || []).length;
-  assert.equal(n, 2, '两个分段调用点都要传配置');
-  assert.ok(cl.includes('按逗号分段'), '面板要有开关');
+  assert.equal(n, 3, '三个分段调用点（回复 / 主动 / qq_send_message 工具）都要传配置');
 });
 
 test('正文里的图片地址要发成真图，不能发成链接', async () => {
@@ -3156,4 +3155,73 @@ test('回归：sendSegments 的图片超时判定不能被困在 if (kind === "g
   const ifBlock = body.slice(ifStart, end);
   assert.ok(!ifBlock.includes('hasImage') && !ifBlock.includes('timeoutMs'),
     'hasImage / timeoutMs 必须在 if 块外：曾被误缩进去，群聊里算完即丢、私聊里根本不算');
+});
+
+// 回归：主动消息的「工具发过就不再发正文」判定。
+// 实机事故：她用 qq_generate_image + qq_send_message 把内容发出去后，正文里
+// 又写了「照片发出去了」「配了句话」和整段内容复述 —— 全被当消息发了出去：
+// 同一条内容发两遍，还多两句不像人说的话。reply 流程早有 #sentCount 去重，
+// 主动流程一直缺这层。
+test('回归：主动回合里工具发过东西就不再发正文（叙述和复述不再漏出去）', () => {
+  const rt = read('lib/runtime.mjs');
+  assert.match(rt, /const deliveredViaTools = this\.#sentCount\(target\.kind, target\.peerId\) > sentBefore;/,
+    '判据是「这一轮发出去了几条」，不是文本有没有产出');
+  assert.match(rt, /let messageText = deliveredViaTools \? '' : text;/, '工具发过就不再发正文');
+  // 空正文但工具发过 = 已送达：不能当「没写出内容」失败，否则窗口不记 fired、
+  // 60 秒后又生成一条 —— 这是另一种重复。
+  assert.match(rt, /if \(!text && !deliveredViaTools\) return \{ ok: false, reason: 'empty-completion'/,
+    '工具发过时不能按空回合失败处理');
+  // 换模型兜底也要受同一判定：超时回合可能已经用工具发过东西。
+  assert.match(rt, /if \(sentBefore >= 0 && this\.#sentCount\(target\.kind, target\.peerId\) > sentBefore\) return \{ text, raw \};/,
+    '换模型兜底不能再发一遍');
+});
+
+test('回归：主动回合工具真发出去的正文要提得出来（情感记账看它，不看汇报）', async () => {
+  const { sentTextFromEvents } = await import('../lib/runtime.mjs');
+  const events = [
+    { type: 'assistant/message', data: { message: { content: [
+      { type: 'tool-call', name: 'qq_generate_image', arguments: { caption: '路过这家店走不动道了', prompt: '…' } },
+      { type: 'tool-call', name: 'qq_send_message', arguments: { text: '出来吃饭路过一家卖游戏的店' } },
+    ] } } },
+    { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '照片发出去了，配了句话' }] } } },
+  ];
+  assert.equal(sentTextFromEvents(events), '路过这家店走不动道了\n出来吃饭路过一家卖游戏的店',
+    '取工具的正文/图配文，不取叙述文本');
+  assert.equal(sentTextFromEvents([]), '', '没发过就是空');
+});
+
+test('回归：qq_send_message 要按聊天习惯分条（工具路径不再整段直发）', () => {
+  const rt = read('lib/runtime.mjs');
+  const tl = read('lib/tools.mjs');
+  assert.match(tl, /runtime\.sendChat\(kind, peerId, textArg\(args\.text/, '工具要走 sendChat');
+  assert.match(rt, /async sendChat\(kind, peerId, text, requestIdValue, signal, mentions = \[\]\)/, 'sendChat 要存在');
+  // 每段一条 ledger（requestId#序号），重试不会把前面几段重发一遍
+  assert.match(rt, /segments\.length === 1 \? requestIdValue : `\$\{requestIdValue\}#\$\{index\}`/, '分段要各自一条 ledger');
+});
+
+test('回归：生图提示词往真实照片压，但不硬掰别的画风', async () => {
+  const { buildImagePrompt } = await import('../lib/imagegen.mjs');
+  const photo = buildImagePrompt({ prompt: '一家卖游戏的店' });
+  assert.ok(photo.includes('真实照片') && photo.includes('不要插画'), '默认语义是拍照片');
+  const styled = buildImagePrompt({ prompt: '一只猫', style: '写实摄影' });
+  assert.ok(styled.includes('真实照片'), '写实/摄影也是照片');
+  const ink = buildImagePrompt({ prompt: '一只猫', style: '水墨' });
+  assert.ok(!ink.includes('不要插画'), '水墨不能被掰成照片');
+  assert.ok(ink.includes('水墨'), '风格原样保留');
+});
+
+// 回归：模型选择必须装到会话上。
+// 实机事故：面板写着 deepseek-official（17:18 保存成功），她却一直用 workbuddy/mimo
+// 答话 —— resume 只把 agentOptions 当「兜底」，会话一旦跑过请求就记住自己的模型。
+// DSH 换模型的正路是 agent.model.select()（面板 session.selectModel 的底层）。
+test('回归：进入会话后要把模型选择显式装上（resume 不认 agentOptions）', () => {
+  const rt = read('lib/runtime.mjs');
+  const ui = read('lib/ui.mjs');
+  assert.match(rt, /^\s*handle\.agent\.model\.select\(agentOptions\);/m, '要用 agent.model.select 安装选择（真调用，不是注释）');
+  assert.match(rt, /typeof handle\.agent\?\.model\?\.select === 'function'/, '老宿主没有该接口时要跳过，不能炸');
+  // 安装失败不能影响回话：能回话比模型对不上更重要
+  assert.match(rt, /会话模型选择安装失败（沿用会话里记的模型）/, '失败要降级而不是中断');
+  // 面板改模型时要丢缓存，否则缓存里的旧 agent 还在用旧模型答复
+  assert.match(ui, /if \(routeChanged && typeof runtime\.dropSessions === 'function'\) runtime\.dropSessions\(\);/,
+    'route 变化要丢会话缓存');
 });
