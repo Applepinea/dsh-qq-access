@@ -5,7 +5,7 @@
 // 行为验证需要真实 QQ 环境，见 docs/VALIDATION.md。
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
@@ -2602,4 +2602,393 @@ test('共享模式热应用：模式切换触发 dropSessions', () => {
   assert.match(ui, /sharedAgentIs !== sharedAgentWas/, '变化检测');
   assert.match(ui, /personaIs !== personaWas/, 'persona 变化也 drop');
   assert.match(ui, /dropSessions\?\.\(\)/, 'drop 调用');
+});
+
+// ───────────────────────────────────────────────────────────
+// A7 / A8 行为测试。
+//
+// 这一组真的跑 accept() / restorePending() / reply()，不是断言源码字符串。
+// 共用 dataDir 会让「归档了几条」互相污染，所以每个用例单开目录。
+// ───────────────────────────────────────────────────────────
+
+async function accessRuntime(accessOverrides = {}) {
+  const dataDir = await mkdtemp(join(tmpdir(), "a78-"));
+  const cfg = normalizeConfig({
+    selfId: "10001",
+    onebot: { token: "a".repeat(24) },
+    events: { secret: "b".repeat(24) },
+    dataDir,
+    reply: { private: true, group: "all", debounceMs: 60_000 },
+    access: { privateMode: "all", groupMode: "all", ...accessOverrides },
+  });
+  cfg.dataDir = dataDir;
+  const rt = new QQRuntime(cfg, {
+    ctx: { get: () => undefined, agents: { create: async () => ({ agent: {} }) }, tools: {} },
+    createUserMessage: (x) => x,
+    logger: { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
+  });
+  await rt.store.init();
+  await rt.ledger.init();
+  await rt.replySettled?.init?.();
+  return { rt, dataDir };
+}
+
+// message_id 必须是纯数字：normalizeEvent 用 /^-?\d{1,30}$/ 校验，
+// 传 "p1" 这种会被整条丢掉，断言就变成「空成功」——踩过一次。
+let a78Mid = 900000;
+function a78Event(text, extra = {}) {
+  a78Mid += 1;
+  return {
+    post_type: "message", message_type: "private",
+    user_id: "20002", self_id: "10001", message_id: a78Mid,
+    time: Math.floor(Date.now() / 1000),
+    raw_message: text, message: [{ type: "text", data: { text } }],
+    ...extra,
+  };
+}
+
+test("A7 拉黑者：不归档、不入队", async () => {
+  const { rt, dataDir } = await accessRuntime({ blockedUsers: ["20002"] });
+  try {
+    await rt.accept(a78Event("在吗"));
+    const q = await rt.store.query({ kind: "private", peerId: "20002", limit: 10 });
+    assert.equal(q.messages.length, 0, "拉黑者的消息不该落盘");
+    assert.equal((rt.pending.get("private:20002") ?? []).length, 0, "也不该入队");
+  } finally { await rt.stop(); await rm(dataDir, { recursive: true, force: true }); }
+});
+
+test("A7 对照：未拉黑正常归档并入队", async () => {
+  const { rt, dataDir } = await accessRuntime();
+  try {
+    await rt.accept(a78Event("在吗"));
+    const q = await rt.store.query({ kind: "private", peerId: "20002", limit: 10 });
+    assert.equal(q.messages.length, 1, "未拉黑要正常归档");
+    assert.equal((rt.pending.get("private:20002") ?? []).length, 1, "并要入队");
+  } finally { await rt.stop(); await rm(dataDir, { recursive: true, force: true }); }
+});
+
+test("A7 闸门挡下的群消息仍然归档（不对称是故意的）", async () => {
+  const { rt, dataDir } = await accessRuntime();
+  try {
+    rt.config.reply.group = "off";
+    await rt.accept({
+      post_type: "message", message_type: "group", group_id: "30003", user_id: "20002",
+      self_id: "10001", message_id: 800001, time: Math.floor(Date.now() / 1000),
+      raw_message: "随便说说", message: [{ type: "text", data: { text: "随便说说" } }],
+    });
+    const q = await rt.store.query({ kind: "group", peerId: "30003", limit: 10 });
+    assert.equal(q.messages.length, 1, "这次不回不等于以后不用，得留上下文");
+    assert.equal((rt.pending.get("group:30003") ?? []).length, 0, "但不入队");
+  } finally { await rt.stop(); await rm(dataDir, { recursive: true, force: true }); }
+});
+
+test("A8 补漏消息：归档、不回复、登记为已处理", async () => {
+  const { rt, dataDir } = await accessRuntime();
+  try {
+    const e = a78Event("很久以前的话", { time: Math.floor(Date.now() / 1000) - 3600 });
+    await rt.accept(e, { silent: true });
+    const q = await rt.store.query({ kind: "private", peerId: "20002", limit: 10 });
+    assert.equal(q.messages.length, 1, "补漏消息要进上下文");
+    assert.equal((rt.pending.get("private:20002") ?? []).length, 0, "但不要回");
+    assert.equal(rt.replySettled.has("private", "20002", String(e.message_id)), true, "要登记，否则每轮都会再捞一次");
+  } finally { await rt.stop(); await rm(dataDir, { recursive: true, force: true }); }
+});
+
+test("A8 补漏消息不会被 restorePending 复活", async () => {
+  const { rt, dataDir } = await accessRuntime();
+  try {
+    const e = a78Event("旧消息", { time: Math.floor(Date.now() / 1000) - 3600 });
+    await rt.accept(e, { silent: true });
+    await rt.replySettled.flush();
+    rt.pending.clear();
+    await rt.restorePending(undefined, 7200);
+    assert.equal((rt.pending.get("private:20002") ?? []).length, 0, "登记过的不能再捞回来");
+  } finally { await rt.stop(); await rm(dataDir, { recursive: true, force: true }); }
+});
+
+test("对照组：普通未回消息会被 restorePending 捞回", async () => {
+  const { rt, dataDir } = await accessRuntime();
+  try {
+    await rt.store.append({
+      selfId: "10001", kind: "private", peerId: "20002", senderId: "20002",
+      nickname: "某人", messageId: "777001", messageSeq: "", direction: "in",
+      time: Math.floor(Date.now() / 1000) - 60, receivedAt: Date.now(), text: "没回的话",
+    });
+    await rt.restorePending(undefined, 7200);
+    assert.equal((rt.pending.get("private:20002") ?? []).length, 1, "上一条测试不能是空成功");
+  } finally { await rt.stop(); await rm(dataDir, { recursive: true, force: true }); }
+});
+
+test("A7-2 拉黑后 restorePending 不复活旧消息", async () => {
+  const { rt, dataDir } = await accessRuntime();
+  try {
+    await rt.store.append({
+      selfId: "10001", kind: "private", peerId: "20002", senderId: "20002",
+      nickname: "某人", messageId: "777002", messageSeq: "", direction: "in",
+      time: Math.floor(Date.now() / 1000) - 60, receivedAt: Date.now(), text: "拉黑前",
+    });
+    rt.pending.clear();
+    rt.config.access.blockedUsers = ["20002"];
+    await rt.restorePending(undefined, 7200);
+    assert.equal((rt.pending.get("private:20002") ?? []).length, 0, "一次重启不该让拉黑失效");
+  } finally { await rt.stop(); await rm(dataDir, { recursive: true, force: true }); }
+});
+
+test("A7-3 reply() 入口复查访问权限", async () => {
+  const { rt, dataDir } = await accessRuntime();
+  try {
+    await rt.accept(a78Event("排队中"));
+    const msg = (rt.pending.get("private:20002") ?? [])[0];
+    assert.ok(msg, "前置：消息已入队");
+    rt.config.access.blockedUsers = ["20002"];
+    const before = rt.skippedReplies;
+    const r = await rt.reply(msg);
+    assert.deepEqual(r, {}, "入口就该拦下");
+    assert.equal(rt.skippedReplies, before + 1, "要计数，否则面板上看不出被拦了多少");
+  } finally { await rt.stop(); await rm(dataDir, { recursive: true, force: true }); }
+});
+
+// ---------------------------------------------------------------------------
+// UI 可用性：卡片折叠、吸顶跳转条、吸底保存条。
+//
+// 这三项都是「只增不改」的改动：既有文案一个没动（面板测试按源码文本校验），
+// 新增的是外壳。所以这里既验证新行为，也验证旧文案还在。
+// ---------------------------------------------------------------------------
+
+/** 用最小 React/DOM 替身把 Card 真正渲染一遍，返回节点树。 */
+function cardHarness() {
+  const src = read("lib/client.js");
+  const start = src.indexOf("    function Card(props) {");
+  const end = src.indexOf("    function Switch(props) {");
+  assert.ok(start > 0 && end > start, "要能从 client.js 里切出 Card 源码");
+  const cardSrc = src.slice(start, end);
+
+  const store = new Map();
+  const localStorage = {
+    getItem: (k) => (store.has(k) ? store.get(k) : null),
+    setItem: (k, v) => store.set(k, String(v)),
+  };
+  // Hook 存储按「挂载位置」隔离。真实 React 里每个组件实例有自己的 hook 槽，
+  // 位置由它在树中的坐标决定；这里用卡片标题当坐标 —— 每张卡在面板里只出现一次。
+  // 共用一个全局数组会让一张卡的折叠状态串到另一张卡上（那正是本测试要防的 bug）。
+  let slots = new Map();
+  let current = "";
+  let idx = 0;
+  const React = {
+    useState(init) {
+      if (!slots.has(current)) slots.set(current, []);
+      const hooks = slots.get(current);
+      const i = idx++;
+      if (!(i in hooks)) hooks[i] = typeof init === "function" ? init() : init;
+      const set = (v) => { hooks[i] = typeof v === "function" ? v(hooks[i]) : v; };
+      return [hooks[i], set];
+    },
+  };
+  function h(type, props, ...children) {
+    return { type, props: props || {}, children: children.flat(Infinity).filter((c) => c != null) };
+  }
+  const CARD_IDS = { "模型": "card-model", "归档": "card-archive", "生图": "card-image" };
+  const fn = new Function("React", "h", "window", "CARD_IDS", "useState", cardSrc + "\nreturn Card;");
+  const Card = fn(React, h, { localStorage }, CARD_IDS, React.useState);
+  return {
+    store,
+    // slot 是挂载位置。同一张卡多次渲染要传同一个 slot（React 重渲染就是这样）。
+    render(props, slot) {
+      current = slot ?? props.title;
+      idx = 0;
+      return Card(props);
+    },
+    // 清空所有 hook 槽：模拟刷新页面（组件全部重新挂载）
+    fresh() { slots = new Map(); idx = 0; return this; },
+  };
+}
+
+const cardBody = () => ({ type: "div", props: {}, children: ["BODY"] });
+const foldButton = (node) =>
+  (node.children[0].children || []).find((c) => c && c.props && c.props.className === "fold") || null;
+
+test("UI：设置卡片可以折叠，且状态按卡片隔离", () => {
+  const hv = cardHarness();
+
+  let n = hv.render({ title: "模型", children: [cardBody()] });
+  assert.equal(n.props.id, "card-model", "锚点 id 要留着（跳转条靠它定位）");
+  assert.equal(n.props.className, "card", "默认展开");
+  assert.equal(n.children.length, 2, "展开时是「标题行 + 内容」");
+  assert.ok(foldButton(n), "已登记的卡片要有折叠按钮");
+  assert.equal(foldButton(n).props["aria-expanded"], "true", "无障碍状态要对");
+
+  foldButton(n).props.onClick();
+  n = hv.render({ title: "模型", children: [cardBody()] });
+  assert.equal(n.props.className, "card folded", "点一下要折叠");
+  assert.equal(n.children.length, 1, "折叠后只剩标题行，内容不渲染");
+  assert.equal(n.props.id, "card-model", "折叠后锚点仍在，跳转还能定位");
+  assert.equal(foldButton(n).props["aria-expanded"], "false", "折叠后无障碍状态要更新");
+  assert.equal(hv.store.get("qqa.fold.card-model"), "1", "折叠状态要持久化");
+
+  // 另一张卡不受影响 —— 这是最容易被共用 key 搞坏的地方
+  const other = hv.render({ title: "归档", children: [cardBody()] });
+  assert.equal(other.props.className, "card", "折叠模型不该连带折叠归档");
+
+  // 刷新后恢复
+  hv.fresh();
+  assert.equal(hv.render({ title: "模型", children: [cardBody()] }).props.className, "card folded", "刷新后要记住折叠状态");
+  assert.equal(hv.render({ title: "归档", children: [cardBody()] }).props.className, "card", "没折叠过的卡片刷新后仍是展开");
+
+  // 再点一次展开，并写回 0
+  n = hv.render({ title: "模型", children: [cardBody()] });
+  foldButton(n).props.onClick();
+  n = hv.render({ title: "模型", children: [cardBody()] });
+  assert.equal(n.props.className, "card", "再点一下要展开");
+  assert.equal(hv.store.get("qqa.fold.card-model"), "0", "展开也要写回");
+});
+
+test("UI：引导屏卡片不给折叠按钮（避免共用 undefined 键串台）", () => {
+  // 「接下来」「当前状态」这类标题是动态的、没登记进 CARD_IDS，domId 是 undefined。
+  // 若照样渲染折叠按钮，所有这类卡片会共用同一个 localStorage 键，折叠一张全折叠。
+  const hv = cardHarness();
+  for (const title of ["接下来", "当前状态", "NapCat 状态", "配置教程", "管理员（可留空）"]) {
+    const n = hv.render({ title, children: [cardBody()] });
+    assert.equal(n.props.id, undefined, "前置：" + title + " 没有 domId");
+    assert.equal(foldButton(n), null, title + " 不该有折叠按钮");
+    assert.equal(n.children.length, 2, title + " 内容要始终可见");
+  }
+  assert.equal(hv.store.size, 0, "不该往 localStorage 写任何 undefined 键");
+});
+
+test("UI：localStorage 不可写时折叠仍然可用（隐私模式）", () => {
+  const src = read("lib/client.js");
+  const start = src.indexOf("    function Card(props) {");
+  const end = src.indexOf("    function Switch(props) {");
+  const cardSrc = src.slice(start, end);
+  let hooks = []; let idx = 0;
+  const React = {
+    useState(init) {
+      const i = idx++;
+      if (!(i in hooks)) hooks[i] = typeof init === "function" ? init() : init;
+      const set = (v) => { hooks[i] = typeof v === "function" ? v(hooks[i]) : v; };
+      return [hooks[i], set];
+    },
+  };
+  const h = (type, props, ...children) => ({ type, props: props || {}, children: children.flat(Infinity).filter((c) => c != null) });
+  const denied = { getItem() { throw new Error("denied"); }, setItem() { throw new Error("denied"); } };
+  const fn = new Function("React", "h", "window", "CARD_IDS", "useState", cardSrc + "\nreturn Card;");
+  const Card = fn(React, h, { localStorage: denied }, { "模型": "card-model" }, React.useState);
+  const render = () => { idx = 0; return Card({ title: "模型", children: [cardBody()] }); };
+  assert.doesNotThrow(render, "读不到 localStorage 不能崩");
+  const n = render();
+  assert.equal(n.props.className, "card", "降级为展开");
+  assert.doesNotThrow(() => foldButton(n).props.onClick(), "写不进 localStorage 也不能崩");
+});
+
+test("UI：跳转条吸顶、保存条吸底，且既有文案未被改动", () => {
+  const c = read("lib/client.js");
+  assert.ok(c.includes('className: "quicknav sticky"'), "跳转条要吸顶");
+  assert.match(c, /\.qqa \.quicknav\.sticky\{position:sticky;top:0/, "要有吸顶样式");
+  assert.match(c, /\.qqa \.savebar\{position:sticky;bottom:0/, "保存条要吸底");
+  assert.ok(c.includes('className: "savebar"'), "页尾要渲染保存条");
+  // 原来只在最上和最下的两个保存按钮都还在 —— 上面的仍在标题行，下面的是吸底条
+  const saves = c.split('busy ? "保存中…" : (dirty ? "保存设置 *" : "保存设置")').length - 1;
+  assert.equal(saves, 2, "顶部和吸底各一个保存按钮，不多不少");
+  assert.ok(c.includes("有未保存的修改"), "未保存提示要保留");
+  assert.ok(c.includes("放弃修改"), "放弃修改按钮要保留");
+  // 提示要排在吸底条之前，否则会被压在屏幕外
+  const iMsg = c.indexOf('msg ? h("div", { className: "msg" }, msg) : null');
+  const iBar = c.indexOf('h("div", { className: "savebar" }');
+  assert.ok(iMsg > 0 && iBar > iMsg, "保存结果提示要在吸底条之前");
+});
+
+test('回归：#proactiveTurn 非共享路径必须自己生成 sessionId（不能引用未声明的 id）', () => {
+  const rt = read('lib/runtime.mjs');
+  const i = rt.indexOf('async #proactiveTurn(');
+  assert.ok(i > 0, '要有 #proactiveTurn');
+  // 方法体到下一个同名深度的结束：取到 #proactiveTurnShared 之前
+  const jShared = rt.indexOf('#proactiveTurnShared(prompt, target, queryText)');
+  const body = rt.slice(i, rt.indexOf('async #proactiveTurnShared'));
+  assert.ok(body.length > 200, '能取到方法体');
+  // useShared 分支之后，必须为临时 agent 生成一个独立的 sessionId
+  const afterShared = body.slice(body.indexOf('return await this.#proactiveTurnShared'));
+  assert.ok(
+    /const id\s*=\s*["'`]qq-proactive-/.test(afterShared),
+    '非共享路径必须声明 qq-proactive- 前缀的 id，否则 sessionId 引用未定义变量',
+  );
+  // 并且这个 id 要真的被用在 agents.create 上
+  assert.match(afterShared, /sessionId:\s*id/, '临时 agent 要用这个 id');
+});
+
+// ---------------------------------------------------------------------------
+// 配置损坏的自愈与告知。
+//
+// 真实场景：用户手改 config.json 漏了个引号，或编辑器写一半断电。
+// 修复前 loadRawOrTemplate 只认 ENOENT，SyntaxError 会被重新抛出，
+// /state 返回 500，面板拿不到 state 就整屏空白 —— 用户看不到原因也没有修复入口。
+// ---------------------------------------------------------------------------
+
+test("配置 JSON 损坏时：备份坏文件、按模板重建，并告知面板", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "corrupt-cfg-"));
+  try {
+    const configPath = join(dir, "config.json");
+    // 半截 JSON：正是「手抖删了个引号」的样子
+    await writeFile(configPath, '{ "selfId": "3576557899", "reply": { "group": "smart"\n');
+
+    const routes = new Map();
+    const ctx = {
+      webServer: { register: ({ path, handler }) => { routes.set(path, handler); return () => {}; } },
+      logger: { info() {}, warn() {}, error() {} },
+      effect(fn) { fn(); return () => {}; },
+      get() { return undefined; },
+    };
+    registerUi(ctx, null, configPath);
+
+    const handler = routes.get("/dsh-qq/api/state");
+    assert.ok(handler, "要注册 /state 路由");
+
+    // 构造最小的 req/res 替身
+    const makeRes = () => {
+      const res = { statusCode: 0, headers: {}, body: "" };
+      res.setHeader = (k, v) => { res.headers[k.toLowerCase()] = v; };
+      res.end = (chunk) => { res.body += chunk ?? ""; };
+      res.writeHead = (code) => { res.statusCode = code; };
+      return res;
+    };
+    const req = { method: "GET", headers: { host: "127.0.0.1:6099" }, socket: { remoteAddress: "127.0.0.1" }, url: "/dsh-qq/api/state" };
+    const res = makeRes();
+
+    await assert.doesNotReject(() => handler(req, res), "/state 不该因为配置损坏而 500");
+    assert.equal(res.statusCode, 200, "要返回 200，面板才渲染得出来");
+    const data = JSON.parse(res.body);
+    assert.equal(data.ok, true, "响应要是 ok");
+    assert.equal(data.missingConfig, true, "损坏按「缺配置」处理，引导用户重建");
+    assert.ok(data.corruptConfig, "要告诉面板配置曾经损坏");
+    assert.match(data.corruptConfig.backup, /config\.json\.corrupt-/, "要给备份路径");
+    assert.ok(String(data.corruptConfig.message).length > 0, "要带上原始报错，方便定位");
+
+    // 坏文件确实被保住了，没被静默清空
+    const backupText = await readFile(data.corruptConfig.backup, "utf8");
+    assert.ok(backupText.includes('\"group\": \"smart\"'), "备份必须是原始内容");
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("配置正常时不受损坏兜底影响", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "ok-cfg-"));
+  try {
+    const { bootstrapConfig } = await import("../lib/config.mjs");
+    const configPath = join(dir, "config.json");
+    const template = bootstrapConfig({ selfId: "", ownerIds: [] });
+    template.loginPending = true;
+    await writeFile(configPath, JSON.stringify(template, null, 2) + "\n");
+
+    const routes = new Map();
+    const ctx = {
+      webServer: { register: ({ path, handler }) => { routes.set(path, handler); return () => {}; } },
+      logger: { info() {}, warn() {}, error() {} },
+      effect(fn) { fn(); return () => {}; },
+      get() { return undefined; },
+    };
+    registerUi(ctx, null, configPath);
+    const res = { setHeader() {}, end(c) { this.body = (this.body || "") + c; }, writeHead() {} };
+    await routes.get("/dsh-qq/api/state")({ method: "GET", headers: { host: "127.0.0.1:6099" }, socket: { remoteAddress: "127.0.0.1" }, url: "/" }, res);
+    const data = JSON.parse(res.body);
+    assert.equal(data.missingConfig, false, "正常配置不该被当成缺失");
+    assert.equal(data.corruptConfig, undefined, "正常配置不该有损坏标记");
+  } finally { await rm(dir, { recursive: true, force: true }); }
 });
