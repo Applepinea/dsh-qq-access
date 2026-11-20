@@ -1,5 +1,22 @@
 # 变更记录
 
+## 1.5.2
+
+### 修复
+
+- **共享会话模式（sharedAgent）从 1.5.0 起就没有真正生效过**。
+  `normalizeConfig` 里那一行 `sharedAgent: raw.reply?.sharedAgent === true`
+  被写在了 `reply` 对象字面量的 `};` **之后**，于是它是一条带标签的语句，
+  而不是对象属性。语法完全合法，`node --check` 和 `npm run check` 都不会报，
+  但 `reply.sharedAgent` 永远是 `undefined`，
+  `runtime` 里 `config.reply?.sharedAgent === true` 恒为假 ——
+  面板上开了共享会话，实际走的仍是每次新建 agent 的隔离路径。已移进对象内。
+
+  新增一条回归测试直接断言 `normalizeConfig` 的返回值：显式 `true` 要得 `true`、
+  显式 `false` 要得 `false`、缺省要得 `false`。把修复还原后该测试立即失败。
+
+  这类「语法合法但语义跑偏」的错误静态检查抓不到，只能靠断言返回值。
+
 ## 1.5.1
 
 ### 修复

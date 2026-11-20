@@ -3076,3 +3076,18 @@ test("并发保存：config.json 不会被写成半截", async () => {
     assert.deepEqual(leftovers, [], "不该残留 .tmp 文件");
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
+
+// 回归：reply.sharedAgent 必须真的进到 reply 对象里。
+// 曾经它被误放在 reply 对象字面量的 `};` 之后 —— 语法合法（变成带标签的语句），
+// node --check 和 npm run check 都不会报，但 reply.sharedAgent 永远是 undefined，
+// 于是 runtime 里 `config.reply?.sharedAgent === true` 永远为假，共享会话模式整个失效。
+test('回归：reply.sharedAgent 进得去 reply 对象（不能掉到它外面）', () => {
+  const base = { selfId: "3576557899", onebot: { token: "x".repeat(32) }, events: { secret: "y".repeat(32) } };
+  const on = normalizeConfig({ ...base, reply: { sharedAgent: true } });
+  const off = normalizeConfig({ ...base, reply: { sharedAgent: false } });
+  const dflt = normalizeConfig({ ...base });
+  assert.equal(on.reply.sharedAgent, true, "显式开启要生效");
+  assert.equal(off.reply.sharedAgent, false, "显式关闭要生效");
+  assert.equal(dflt.reply.sharedAgent, false, "缺省必须是关闭");
+  assert.ok("sharedAgent" in on.reply, "键要真正挂在 reply 上");
+});
