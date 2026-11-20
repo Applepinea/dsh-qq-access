@@ -5,7 +5,7 @@
 // 行为验证需要真实 QQ 环境，见 docs/VALIDATION.md。
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
@@ -2990,5 +2990,89 @@ test("配置正常时不受损坏兜底影响", async () => {
     const data = JSON.parse(res.body);
     assert.equal(data.missingConfig, false, "正常配置不该被当成缺失");
     assert.equal(data.corruptConfig, undefined, "正常配置不该有损坏标记");
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+// ---------------------------------------------------------------------------
+// 并发保存。
+//
+// 真实场景：双击保存、开了两个面板标签页、保存的同时点了「同步勾选」。
+// 修复前三处问题：
+//   1. atomicWriteJson 用固定 tmp 名 → 后一个 rename 抢走临时文件，前一个撞 ENOENT 回 500；
+//   2. 同上，两路写入交错能把 config.json 写成半截；
+//   3. 「读全量→改几字段→写回全量」不排队 → 先写的改动被整段抹掉（丢更新）。
+// ---------------------------------------------------------------------------
+
+function uiHarness(configPath) {
+  const routes = new Map();
+  const ctx = {
+    webServer: { register: ({ path, handler }) => { routes.set(path, handler); return () => {}; } },
+    logger: { info() {}, warn() {}, error() {} },
+    effect(fn) { fn(); return () => {}; },
+    get() { return undefined; },
+  };
+  registerUi(ctx, null, configPath);
+  const post = (path, payload) => {
+    const buf = Buffer.from(JSON.stringify(payload), "utf8");
+    const res = { statusCode: 0, headers: {}, body: "" };
+    res.setHeader = (k, v) => { res.headers[String(k).toLowerCase()] = v; };
+    res.writeHead = (code) => { res.statusCode = code; };
+    res.end = (chunk) => { res.body += chunk ?? ""; };
+    const req = {
+      method: "POST",
+      headers: { host: "127.0.0.1:6099", "content-length": String(buf.length) },
+      socket: { remoteAddress: "127.0.0.1" },
+      url: path,
+      [Symbol.asyncIterator]() {
+        let done = false;
+        return { async next() { if (done) return { done: true }; done = true; return { done: false, value: buf }; } };
+      },
+    };
+    return Promise.resolve(routes.get(path)(req, res)).then(() => ({ status: res.statusCode, data: (() => { try { return JSON.parse(res.body); } catch { return { raw: res.body }; } })() }));
+  };
+  return { routes, post };
+}
+
+test("并发保存：不出现 500，且两份修改都落地", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "concurrent-save-"));
+  try {
+    const configPath = join(dir, "config.json");
+    const tpl = bootstrapConfig({ selfId: "3576557899", ownerIds: ["2621997340"] });
+    await writeFile(configPath, JSON.stringify(tpl, null, 2) + "\n");
+    const ui = uiHarness(configPath);
+
+    // 两路改不同字段，必须都留下 —— 这正是「丢更新」的检验点。
+    const [a, b] = await Promise.all([
+      ui.post("/dsh-qq/api/config", { patch: { reply: { group: "all", maxChars: 111 } } }),
+      ui.post("/dsh-qq/api/config", { patch: { reply: { group: "smart", maxChars: 999 } } }),
+    ]);
+    assert.equal(a.status, 200, "A 不该 500（曾经撞 rename ENOENT）");
+    assert.equal(b.status, 200, "B 不该 500");
+
+    const saved = JSON.parse(await readFile(configPath, "utf8"));
+    assert.equal(saved.reply.maxChars, 999, "maxChars 必须是最新写入的值");
+    assert.equal(saved.reply.group, "smart", "group 必须是最新写入的值");
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test("并发保存：config.json 不会被写成半截", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "concurrent-corrupt-"));
+  try {
+    const configPath = join(dir, "config.json");
+    const tpl = bootstrapConfig({ selfId: "3576557899", ownerIds: [] });
+    await writeFile(configPath, JSON.stringify(tpl, null, 2) + "\n");
+    const ui = uiHarness(configPath);
+
+    const runs = [];
+    for (let i = 0; i < 12; i++) {
+      runs.push(ui.post("/dsh-qq/api/config", { patch: { reply: { maxChars: 100 + i } } }));
+    }
+    const results = await Promise.all(runs);
+    for (const r of results) assert.equal(r.status, 200, "并发保存都该成功");
+    // 解析得动就说明没写坏；而且不留临时文件垃圾
+    const saved = JSON.parse(await readFile(configPath, "utf8"));
+    assert.ok(Number.isInteger(saved.reply.maxChars), "内容要完整");
+    const leftovers = (await readdir(dir)).filter((n) => n.endsWith(".tmp"));
+    assert.deepEqual(leftovers, [], "不该残留 .tmp 文件");
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
