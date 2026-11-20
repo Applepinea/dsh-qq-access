@@ -1,4 +1,4 @@
-﻿// 冒烟测试：不需要 DSH 宿主即可运行，覆盖清单约定与配置校验。
+// 冒烟测试：不需要 DSH 宿主即可运行，覆盖清单约定与配置校验。
 //
 // 这里刻意只测「不依赖宿主、不依赖网络」的部分：清单指向的文件真实存在、
 // 配置校验的边界。真正需要宿主的部分（导出形状）在没有装宿主时自动跳过。
@@ -1316,12 +1316,16 @@ test('H1 推送到达即触发回包，不再只靠 60 秒轮询', () => {
 
 test('H1 whenIdle 必须有上限，卡住不能停掉所有回复', () => {
   const rt = read('lib/runtime.mjs');
-  assert.match(rt, /#awaitAgentIdle\(record, idleMs\)/, '要包一层超时');
-  assert.match(rt, /record\.agent\.cancel\(\{ kind: 'user' \}\)/, '超时要先 cancel');
-  // 超时后必须把这轮记成已处理，否则 restorePending 会反复重跑
-  // 窗口给大一点：这段里有解释为什么不能写进聊天归档的注释。
-  const seg = rt.slice(rt.indexOf('if (!idleOk)'), rt.indexOf('if (!idleOk)') + 1400);
-  assert.match(seg, /record\.lastMessageId = message\.messageId/, '超时要标记已处理');
+  assert.match(rt, /async #waitAgentIdle\(agent, timeoutMs\)/, '要有通用超时包装');
+  assert.match(rt, /agent\.cancel\(\{ kind: 'user' \}\)/, '超时要先 cancel');
+  // 超时逻辑收口在通用 #waitAgentIdle(agent, ...)，三个调用点共用。
+  assert.match(rt, /#waitAgentIdle\(record\.agent, idleMs\)/, '主回复要接超时');
+  // 临时 agent（情感分析 / 主动消息）也必须走同一个超时。
+  assert.match(rt, /#waitAgentIdle\(handle\.agent, idleMs\)/, '临时 agent 也要接超时');
+  // 从主回复的 idleOk 分支开始取窗口，避免命中情感分析里的同名分支。
+  const replyStart = rt.indexOf('async reply(message)');
+  const mark = rt.indexOf('const idleOk = await this.#waitAgentIdle(record.agent', replyStart);
+  const seg = rt.slice(rt.indexOf('if (!idleOk)', mark), rt.indexOf('if (!idleOk)', mark) + 1400);
   assert.match(seg, /return;/, '超时要跳出本轮');
   // 光有内存标记不够：restorePending 只比较归档时间，必须写持久记录
   assert.match(seg, /replySettled\?\.mark\(/, '超时要写持久放弃记录');
@@ -2241,7 +2245,7 @@ test('commaSplit 配置贯通：默认开、可关、可存', () => {
 
   assert.match(cfg, /commaSplit: true/, '默认值要开');
   assert.match(cfg, /commaSplit: raw\.reply\?\.commaSplit !== false/, '归一化：缺省为开');
-  assert.match(ui, /'timeoutMs', 'commaSplit'\]/, '面板保存白名单要含它');
+  assert.match(ui, /'timeoutMs', 'commaSplit', 'sharedAgent'\]/, '面板保存白名单要含它们');
   const n = (rt.match(/commaSplit: this\.config\.reply\?\.commaSplit !== false/g) || []).length;
   assert.equal(n, 2, '两个分段调用点都要传配置');
   assert.ok(cl.includes('按逗号分段'), '面板要有开关');
@@ -2359,6 +2363,27 @@ test('图片下载要走内网地址黑名单', () => {
   assert.ok(calls >= 2, 'imageBytes 与 resolveImageSource 都要检查');
 });
 
+test('自动回复路径的上下文失效必须能自停，不能每分钟刷一条', () => {
+  const rt = read('lib/runtime.mjs');
+
+  // 实机事故：DSH 重载插件后旧实例 ctx 失效，但 dispose 没触发，定时器还在。
+  // 自动回复走 flushPending，那两处 catch 以前直接 safeLog —— 异常被吞，
+  // #noteInactiveContext 收不到，stop() 永远不执行，于是每分钟失败一次。
+  const note = (rt.match(/#noteInactiveContext\(/g) || []).length;
+  assert.ok(note >= 6, '轮询链 + 自动回复 + 主动消息都要上报，当前 ' + note + ' 处');
+
+  // scheduleFlush 的 catch
+  assert.match(rt, /this\.flushPending\(signal\)\.catch\(e => \{ if \(!this\.#noteInactiveContext\(e\)\)/, 'scheduleFlush 要上报');
+  // 每个会话任务的 catch
+  assert.match(rt, /this\.slots\.run\(\(\) => this\.reply\(trigger\)\)[\s\S]{0,180}#noteInactiveContext\(error\)/, 'reply 失败要上报');
+});
+
+test('上下文失效只上报一次，并且真的 stop 掉后台', () => {
+  const rt = read('lib/runtime.mjs');
+  assert.match(rt, /if \(this\.#inactiveSeen\) return true;/, '重复上报要短路');
+  assert.match(rt, /Promise\.resolve\(\)\.then\(\(\) => this\.stop\(\)\)/, '首次要停后台');
+});
+
 test('面板要有「配置教程」入口', () => {
   const c = read('lib/client.js');
   assert.ok(c.includes('showGuide'), '要有展开状态');
@@ -2407,8 +2432,8 @@ test('群聊回复默认关闭时，群消息只归档不回复', async () => {
   const rt = read('lib/runtime.mjs');
   const i = rt.indexOf('#shouldReplyTo(');
   const seg = rt.slice(i, i + 1200);
-  assert.match(seg, /if \(reply\.group === 'off'\) return false;/, 'off 要直接返回 false');
-  assert.match(seg, /if \(message\.kind === 'private'\) return reply\.private;/, '私聊走 private 开关');
+  assert.match(seg, /reply\.group === 'off'.*detail: 'off'/s, 'off 档要返回不回复');
+  assert.match(seg, /message\.kind === 'private'.*reply\.private/s, '私聊走 private 开关');
 });
 
 test('面板和示例配置也必须是 off', () => {
@@ -2538,4 +2563,43 @@ test('面板：首次配置不问 QQ 号，登录后醒目提示重启', () => {
 
 test('renderThoughtBlock 空列表返回空串', () => {
   assert.equal(renderThoughtBlock({ thoughts: [] }), '');
+});
+
+test('共享会话模式：配置、面板、保存、核心逻辑贯通', () => {
+  const cfg = read('lib/config.mjs');
+  const ui = read('lib/ui.mjs');
+  const cl = read('lib/client.js');
+  const rt = read('lib/runtime.mjs');
+
+  // config: 默认关，normalizeConfig 保留
+  assert.match(cfg, /sharedAgent: raw\.reply\?\.sharedAgent === true/, 'config 归一化');
+  assert.ok(cfg.includes('sharedAgent: false'), 'bootstrap 默认关');
+
+  // ui: PATCHABLE 白名单
+  assert.ok(ui.includes('sharedAgent'), 'PATCHABLE 要含 sharedAgent');
+
+  // client: 表单初始化 + 保存映射 + 开关控件
+  assert.ok(cl.includes('sharedAgent: data.config.reply.sharedAgent === true'), '面板读取');
+  assert.ok(cl.includes('sharedAgent: Boolean(form.sharedAgent)'), '面板保存');
+  assert.ok(cl.includes('共享会话模式'), '面板要有开关标签');
+
+  // runtime: 稳定 ID + create/resume + 共享主动消息
+  assert.match(rt, /sharedAgent.*=.*this\.config\.reply\?\.sharedAgent === true/, 'sharedAgent 标志');
+  assert.match(rt, /const id = sharedAgent \? stableId/, '稳定 sessionId');
+  assert.match(rt, /createOrResume/, 'create/resume 包装');
+  assert.match(rt, /agents\?\.resume/, 'resume API 探测');
+  assert.ok(rt.includes('#proactiveTurnShared'), '共享主动消息方法');
+
+  // emotion: sessionId 读写一致（用 key 而非 agent session ID）
+  const promptCall = rt.indexOf('this.emotionPromptBlock({');
+  const seg = rt.slice(promptCall, promptCall + 200);
+  assert.match(seg, /sessionId: key/, 'emotionPromptBlock 用 record.key');
+});
+
+test('共享模式热应用：模式切换触发 dropSessions', () => {
+  const ui = read('lib/ui.mjs');
+  assert.match(ui, /sharedAgentWas/, '捕获旧值');
+  assert.match(ui, /sharedAgentIs !== sharedAgentWas/, '变化检测');
+  assert.match(ui, /personaIs !== personaWas/, 'persona 变化也 drop');
+  assert.match(ui, /dropSessions\?\.\(\)/, 'drop 调用');
 });
