@@ -3091,3 +3091,69 @@ test('回归：reply.sharedAgent 进得去 reply 对象（不能掉到它外面�
   assert.equal(dflt.reply.sharedAgent, false, "缺省必须是关闭");
   assert.ok("sharedAgent" in on.reply, "键要真正挂在 reply 上");
 });
+
+// 回归：表情包（NapCat face 段，faceText 形如 "/比心"，id 319）被照抄回来时要还原成真表情。
+// FACE_NAMES 只放得下 0–134 的系统表情，表情包的名字和 id 随包发布，固定表放不下，
+// 只能从见过的消息里学。以前查不到就当纯文本发出去 —— 对方看到的是「[/比心]」几个字
+// 而不是表情（实机上她已经这样发错过好几次，11-18 和 11-20 都有）。
+test('回归：表情包标记 [ /比心 ] 从见过的消息里学得会，回写时是真 face 段', async () => {
+  const { segmentsText, segmentsToText, parseRichText, faceIdByName } = await import('../lib/onebot.mjs');
+  const inbound = [
+    { type: 'text', data: { text: '你咋不理我' } },
+    { type: 'face', data: { id: '319', raw: { faceIndex: 319, faceText: '/比心', faceType: 2 } } },
+  ];
+  assert.equal(segmentsText(inbound), '你咋不理我[/比心]', '显示要保留语义');
+  for (const marker of ['[/比心]', '[比心]', '先听课了 下课找你[/比心]']) {
+    const parts = parseRichText(marker);
+    const face = parts.find((p) => p.type === 'face');
+    assert.ok(face, `${marker} 要解析成 face 段，不能是字面文本`);
+    assert.equal(face.data.id, '319', `${marker} 要用学到的 id`);
+  }
+  assert.equal(segmentsToText(parseRichText('下课找你[/比心]')), '下课找你[/比心]', '归档还原要保住名字，否则下一轮上下文丢了就没法再发同一个');
+  assert.equal(faceIdByName('/比心'), '319', '带斜杠查得到');
+  assert.equal(faceIdByName('比心'), '319', '不带斜杠也查得到');
+});
+
+test('回归：没见过的表情包不瞎编保持纯文本；系统表情与归档记法照常', async () => {
+  const { parseRichText, faceIdByName } = await import('../lib/onebot.mjs');
+  assert.equal(faceIdByName('/没见过的表情包'), '', '没见过就是不认');
+  const unknown = parseRichText('[/没见过的表情包] 哈哈');
+  assert.ok(unknown.every((p) => p.type === 'text'), '不认识的标记保持纯文本');
+  assert.equal(faceIdByName('偷笑'), '20', '系统表情照常');
+  assert.equal(faceIdByName('20'), '20', '数字 id 直接放行');
+  // sendFace 归档的 [表情 20] 被模型照抄回来也要认
+  assert.equal(faceIdByName('表情 20'), '20', '归档记法要认');
+});
+
+test('回归：表情包学表落盘并在重启后读回', async () => {
+  const { segmentsText, faceIdByName, initLearnedFaces } = await import('../lib/onebot.mjs');
+  const dir = await mkdtemp(join(tmpdir(), 'face-map-'));
+  try {
+    const file = join(dir, 'face-map.json');
+    initLearnedFaces(file);
+    segmentsText([{ type: 'face', data: { id: '394', raw: { faceText: '/捂脸', faceType: 2 } } }]);
+    const saved = JSON.parse(await readFile(file, 'utf8'));
+    assert.equal(saved['捂脸']?.id, '394', '学到的要落盘（含名字，归档还原要用）');
+    initLearnedFaces(file);  // 模拟重启
+    assert.equal(faceIdByName('/捂脸'), '394', '重启后读回来还能用');
+    initLearnedFaces('');  // 不留全局状态影响别的测试
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('回归：sendSegments 的图片超时判定不能被困在 if (kind === "group") 里', () => {
+  const src = read('lib/onebot.mjs');
+  const start = src.indexOf('  sendSegments(');
+  const body = src.slice(start, src.indexOf('\n  poke(', start));
+  assert.match(body, /this\.call\(kind === .group. \? .send_group_msg. : .send_private_msg., params, signal, timeoutMs\)/,
+    'timeoutMs 要真的传给 this.call，否则大图被文本的 15 秒超时掐断');
+  const ifStart = body.indexOf('if (kind === "group") {');
+  assert.ok(ifStart >= 0, '要有群聊分支');
+  let depth = 0; let end = -1;
+  for (let k = body.indexOf('{', ifStart); k < body.length; k++) {
+    if (body[k] === '{') depth++;
+    else if (body[k] === '}') { depth--; if (!depth) { end = k; break; } }
+  }
+  const ifBlock = body.slice(ifStart, end);
+  assert.ok(!ifBlock.includes('hasImage') && !ifBlock.includes('timeoutMs'),
+    'hasImage / timeoutMs 必须在 if 块外：曾被误缩进去，群聊里算完即丢、私聊里根本不算');
+});
