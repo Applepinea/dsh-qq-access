@@ -1,5 +1,24 @@
 # 变更记录
 
+## 1.5.0
+
+### 新增：共享会话模式（reply.sharedAgent，默认关闭）
+
+- 开启后同一对话复用同一个 agent（固定 sessionId + DSH 自动恢复），
+  保留完整推理链和工具调用历史；主动消息也走这个 agent，她知道你们聊过什么。
+- 关闭时行为与 1.4.2 完全一致（每条消息独立临时会话）。
+- create → AlreadyExists → resume → UUID 兜底，四级降级保证消息一定回得去。
+- 面板：开关 + 三处条件提示 + 配置教程里的两种模式对比说明。
+- 切换 sharedAgent / 改人格时自动重建会话。
+
+### 修复
+
+- **主动消息在默认配置下完全失效**：加 sharedAgent 分支时误删了
+  const id = "qq-proactive-" + ...，临时 agent 路径的 sessionId 引用了
+  未声明变量，走到就抛错。已补回，并加了一条真正执行的回归测试。
+- 表情包分类 / 虚拟生命生成的 whenIdle 补上超时，避免无限等待。
+- emotionPromptBlock 与 recordEmotion 的 perSession key 不一致。
+
 ## 1.4.2
 
 ### 本轮全面审查补充（1.4.2 发布后）
