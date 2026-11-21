@@ -3225,3 +3225,54 @@ test('回归：进入会话后要把模型选择显式装上（resume 不认 age
   assert.match(ui, /if \(routeChanged && typeof runtime\.dropSessions === 'function'\) runtime\.dropSessions\(\);/,
     'route 变化要丢会话缓存');
 });
+
+// 回归（GitHub issue）：默认配置（image.enabled=false）下，qq_generate_image
+// 根本没注册，而 restrict() 的白名单还写着静态 pluginToolNames ——
+// DSH 的 restrict() 对未知工具名直接抛「names unknown global tool」，setup 整段
+// 失败、agent 建不起来：消息只归档、一条都不回，面板却还显示在线。
+// 修法：白名单按「实际注册的工具名」过滤（index.mjs 在注册后交给 runtime）。
+test('回归：关生图时 setup 不能把没注册的 qq_generate_image 写进 restrict 白名单', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'restrict-fix-'));
+  try {
+    const runtime = await freshRuntime(dir);
+    // 模拟 image.enabled=false 的实际注册结果：没有 qq_generate_image
+    // 要走 trusted 路径才会把完整白名单交给 restrict —— issue 的现场就是管理员私聊。
+    runtime.config.ownerIds = ['2621997340'];
+    runtime.registeredToolNames = ['qq_status', 'qq_send_message', 'qq_read_history', 'qq_recall_message'];
+    let setupCompleted = false;
+    runtime.ctx = {
+      get: () => undefined,
+      tools: {},
+      agents: {
+        create: async (opts) => {
+          const known = new Set(runtime.registeredToolNames);
+          const agentCtx = {
+            tools: { restrict: ({ allow }) => {
+              for (const name of allow) {
+                assert.ok(known.has(name), 'restrict 白名单里有没注册的工具：' + name);
+              }
+            } },
+            systemPrompt: { section: () => {} },
+          };
+          await opts.setup(agentCtx, { });
+          setupCompleted = true;
+          return { agent: { whenIdle: async () => true, session: { seq: 0 } }, dispose: async () => {} };
+        },
+      },
+    };
+    await runtime.recordFor({
+      kind: 'private', peerId: '2621997340', senderId: '2621997340',
+      text: 'hi', nickname: '', messageId: '1', time: Math.floor(Date.now() / 1000),
+    });
+    assert.ok(setupCompleted, 'setup 要跑完而不是被 restrict 抛错中断');
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('回归：工具白名单与能力指南都按实际注册名单（B8 不能只修一半）', () => {
+  const rt = read('lib/runtime.mjs');
+  const idx = read('index.mjs');
+  assert.match(idx, /runtime\.registeredToolNames = definitions\.map/, '注册后要把实际名单交给 runtime');
+  assert.match(rt, /const registered = this\.registeredToolNames\?\.length/, 'restrict 白名单按实际注册的名字取');
+  assert.match(rt, /allow: trusted \? registered : safeList/, 'restrict 用过滤后的名单');
+  assert.match(rt, /const guideTools = registered;/, '能力指南同一份名单，不再手动维护过滤');
+});

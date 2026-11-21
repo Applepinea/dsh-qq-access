@@ -86,9 +86,15 @@ export async function apply(ctx, config = {}) {
   const registerTools = () => {
     for (const dispose of toolDisposers) { try { dispose?.(); } catch { /* 已销毁 */ } }
     toolDisposers = [];
-    for (const definition of makeTools(runtime)) {
+    const definitions = makeTools(runtime);
+    for (const definition of definitions) {
       toolDisposers.push(ctx.tools.register(definition));
     }
+    // restrict() 会逐个校验白名单：名字不在全局工具表里就抛「names unknown
+    // global tool」，setup 整段失败、一条都回不了。工具是条件注册的
+    // （qq_generate_image 只在开生图时注册），白名单必须按实际注册的名字
+    // 过滤 —— 这份名单跟着热更新重建，以后再有条件工具也不用回来改。
+    runtime.registeredToolNames = definitions.map((d) => d.name);
   };
   // 面板保存时通过 runtime 调它，避免 ui.mjs 直接碰 ctx。
   runtime.reregisterTools = registerTools;

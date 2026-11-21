@@ -1,5 +1,24 @@
 # 变更记录
 
+## 1.5.4
+
+### 修复
+
+- **默认配置（未开生图）下完全不回消息**（GitHub issue #2）。`tools.mjs` 里
+  `qq_generate_image` 是条件注册的（只在 `image.enabled` 时注册），而 `recordFor`
+  给会话设工具白名单时用的是未过滤的 `pluginToolNames` —— DSH 的
+  `tools.restrict()` 对未知工具名直接抛 `names unknown global tool
+  "qq_generate_image"`，setup 整段失败、agent 建不起来：消息只归档、永远不回复，
+  错误只落在 debug.log，面板还显示在线，很难自查。
+
+  现在白名单按**实际注册的工具名**过滤（注册结果由 `index.mjs` 交给 runtime，
+  跟随热更新重建 —— 面板开关生图后名单即时跟着变），以后再有条件工具也不会复发；
+  能力指南（guideTools）改用同一份名单，B8 的手动过滤不再需要维护第二份。
+
+  新增功能级回归测试：模拟关生图 + 严格校验的 `restrict` 跑完整 `recordFor` 的
+  setup，旧写法下管理员私聊路径必炸。
+
+
 ## 1.5.3
 
 ### 修复
