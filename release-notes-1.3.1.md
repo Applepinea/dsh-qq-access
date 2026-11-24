@@ -66,7 +66,7 @@ npm i -g dsh-qq-access@1.3.1
 重启后发一张图，再补一句话，然后看：
 
 ```
-C:\Users\csa\.dsh-qq-access\debug.log
+%USERPROFILE%\.dsh-qq-access\debug.log
 ```
 
 出现这几行说明图片真的进了模型：

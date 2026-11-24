@@ -5,7 +5,7 @@
 // 行为验证需要真实 QQ 环境，见 docs/VALIDATION.md。
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import test from 'node:test';
@@ -641,7 +641,7 @@ test('Steam 审查 S4：错误信息不带 API Key', async () => {
 
 test('图片不强制回复，但决定了要回就必须真看得见', async () => {
   const { scoreGroupMessage } = await import('../lib/group-gate.mjs');
-  const base = { selfId: '3576557899', selfNames: ['大肥鱼'], interests: ['游戏'], threshold: 3 };
+  const base = { selfId: '1000000001', selfNames: ['小助手'], interests: ['游戏'], threshold: 3 };
 
   // 关键设计：发图**不是**回复的理由。
   // 群里刷图很常见，逼她每张都接会显得话痨。要不要回仍由原来的闸门决定。
@@ -1470,7 +1470,7 @@ test('#composeProactive 要把 target 透传，并把 raw 事件带回来', () =
   assert.match(rt, /async #composeProactive\(prompt, target = null, queryText = ''\)/, '签名要带 target');
   assert.match(rt, /#proactiveTurn\(prompt, agentOptions, target, queryText\)/, '调用时要传下去');
   // raw 要带回来，主动消息才记得下这一轮的念头
-  assert.match(rt, /if \(events > 0\) return \{ text, raw \};/, '成功时要返回 raw');
+  assert.match(rt, /if \(events > 0\) return \{ text: stripModelBoilerplate\(text\), raw \};/, '成功时要返回 raw（正文过样板句滤网）');
   assert.match(rt, /const \{ text, raw \} = await this\.#composeProactive\(prompt, target, String\(window\.intent/, '主动消息要解构 raw');
 });
 
@@ -2927,7 +2927,7 @@ test("配置 JSON 损坏时：备份坏文件、按模板重建，并告知面�
   try {
     const configPath = join(dir, "config.json");
     // 半截 JSON：正是「手抖删了个引号」的样子
-    await writeFile(configPath, '{ "selfId": "3576557899", "reply": { "group": "smart"\n');
+    await writeFile(configPath, '{ "selfId": "1000000001", "reply": { "group": "smart"\n');
 
     const routes = new Map();
     const ctx = {
@@ -3036,7 +3036,7 @@ test("并发保存：不出现 500，且两份修改都落地", async () => {
   const dir = await mkdtemp(join(tmpdir(), "concurrent-save-"));
   try {
     const configPath = join(dir, "config.json");
-    const tpl = bootstrapConfig({ selfId: "3576557899", ownerIds: ["2621997340"] });
+    const tpl = bootstrapConfig({ selfId: "1000000001", ownerIds: ["2000000002"] });
     await writeFile(configPath, JSON.stringify(tpl, null, 2) + "\n");
     const ui = uiHarness(configPath);
 
@@ -3058,7 +3058,7 @@ test("并发保存：config.json 不会被写成半截", async () => {
   const dir = await mkdtemp(join(tmpdir(), "concurrent-corrupt-"));
   try {
     const configPath = join(dir, "config.json");
-    const tpl = bootstrapConfig({ selfId: "3576557899", ownerIds: [] });
+    const tpl = bootstrapConfig({ selfId: "1000000001", ownerIds: [] });
     await writeFile(configPath, JSON.stringify(tpl, null, 2) + "\n");
     const ui = uiHarness(configPath);
 
@@ -3081,7 +3081,7 @@ test("并发保存：config.json 不会被写成半截", async () => {
 // node --check 和 npm run check 都不会报，但 reply.sharedAgent 永远是 undefined，
 // 于是 runtime 里 `config.reply?.sharedAgent === true` 永远为假，共享会话模式整个失效。
 test('回归：reply.sharedAgent 进得去 reply 对象（不能掉到它外面）', () => {
-  const base = { selfId: "3576557899", onebot: { token: "x".repeat(32) }, events: { secret: "y".repeat(32) } };
+  const base = { selfId: "1000000001", onebot: { token: "x".repeat(32) }, events: { secret: "y".repeat(32) } };
   const on = normalizeConfig({ ...base, reply: { sharedAgent: true } });
   const off = normalizeConfig({ ...base, reply: { sharedAgent: false } });
   const dflt = normalizeConfig({ ...base });
@@ -3172,8 +3172,7 @@ test('回归：主动回合里工具发过东西就不再发正文（叙述和�
   assert.match(rt, /if \(!text && !deliveredViaTools\) return \{ ok: false, reason: 'empty-completion'/,
     '工具发过时不能按空回合失败处理');
   // 换模型兜底也要受同一判定：超时回合可能已经用工具发过东西。
-  assert.match(rt, /if \(sentBefore >= 0 && this\.#sentCount\(target\.kind, target\.peerId\) > sentBefore\) return \{ text, raw \};/,
-    '换模型兜底不能再发一遍');
+  assert.match(rt, /if \(sentBefore >= 0 && this\.#sentCount\(target\.kind, target\.peerId\) > sentBefore\) return \{ text: stripModelBoilerplate\(text\), raw \};/, '换模型兜底不能再发一遍');
 });
 
 test('回归：主动回合工具真发出去的正文要提得出来（情感记账看它，不看汇报）', async () => {
@@ -3237,7 +3236,7 @@ test('回归：关生图时 setup 不能把没注册的 qq_generate_image 写进
     const runtime = await freshRuntime(dir);
     // 模拟 image.enabled=false 的实际注册结果：没有 qq_generate_image
     // 要走 trusted 路径才会把完整白名单交给 restrict —— issue 的现场就是管理员私聊。
-    runtime.config.ownerIds = ['2621997340'];
+    runtime.config.ownerIds = ['2000000002'];
     runtime.registeredToolNames = ['qq_status', 'qq_send_message', 'qq_read_history', 'qq_recall_message'];
     let setupCompleted = false;
     runtime.ctx = {
@@ -3261,7 +3260,7 @@ test('回归：关生图时 setup 不能把没注册的 qq_generate_image 写进
       },
     };
     await runtime.recordFor({
-      kind: 'private', peerId: '2621997340', senderId: '2621997340',
+      kind: 'private', peerId: '2000000002', senderId: '2000000002',
       text: 'hi', nickname: '', messageId: '1', time: Math.floor(Date.now() / 1000),
     });
     assert.ok(setupCompleted, 'setup 要跑完而不是被 restrict 抛错中断');
@@ -3275,4 +3274,147 @@ test('回归：工具白名单与能力指南都按实际注册名单（B8 不�
   assert.match(rt, /const registered = this\.registeredToolNames\?\.length/, 'restrict 白名单按实际注册的名字取');
   assert.match(rt, /allow: trusted \? registered : safeList/, 'restrict 用过滤后的名单');
   assert.match(rt, /const guideTools = registered;/, '能力指南同一份名单，不再手动维护过滤');
+});
+
+// 回归（掉 token 问题）：用户在 NapCat WebUI 里改过登录 token 时，
+// writeManagedConfig 以前无条件拿插件配置里的旧值覆写 webui.json ——
+// 用户改几次都白改，下次重启一律打回原形，体感就是「token 又 invalid 了」。
+// 现在：采纳用户改过的值、写回 config.json，重启后不再回滚。
+test('回归：WebUI 里改过的登录 token 要被采纳并写回配置，不能被回滚', async () => {
+  const { writeManagedConfig } = await import('../lib/napcat.mjs');
+  const dir = await mkdtemp(join(tmpdir(), 'napcat-adopt-'));
+  try {
+    const configPath = join(dir, 'config.json');
+    const napcatDir = join(dir, 'napcat');
+    await writeFile(configPath, JSON.stringify({ napcat: { webuiToken: 'a'.repeat(48) } }));
+    await mkdir(join(napcatDir, 'work', 'config'), { recursive: true });
+    // 用户在 WebUI 里改过 token：webui.json 里是新值，插件配置里还是旧值
+    await writeFile(join(napcatDir, 'work', 'config', 'webui.json'), JSON.stringify({ token: 'myNewToken123' }));
+    const config = {
+      napcat: { directory: napcatDir, webuiPort: 6800, webuiToken: 'a'.repeat(48) },
+      selfId: '1000000001', configPath,
+      onebot: { apiUrl: 'http://127.0.0.1:18080', token: 'b'.repeat(48) },
+      events: { port: 5701, secret: 'c'.repeat(48) },
+    };
+    await writeManagedConfig(config);
+    const webui = JSON.parse(await readFile(join(napcatDir, 'work', 'config', 'webui.json'), 'utf8'));
+    assert.equal(webui.token, 'myNewToken123', '下发的必须是用户改过的 token');
+    const saved = JSON.parse(await readFile(configPath, 'utf8'));
+    assert.equal(saved.napcat.webuiToken, 'myNewToken123', '要写回插件配置，下次启动不再回滚');
+    assert.equal(config.napcat.webuiToken, 'myNewToken123', '运行时配置也要跟着走');
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+test('回归：webui.json 里的脏值不能把 token 换掉；没人改过时用配置值原样下发', async () => {
+  const { writeManagedConfig } = await import('../lib/napcat.mjs');
+  const dir = await mkdtemp(join(tmpdir(), 'napcat-keep-'));
+  try {
+    const configPath = join(dir, 'config.json');
+    const napcatDir = join(dir, 'napcat');
+    const own = 'd'.repeat(48);
+    await writeFile(configPath, JSON.stringify({ napcat: { webuiToken: own } }));
+    await mkdir(join(napcatDir, 'work', 'config'), { recursive: true });
+    // 不合法的 token（太短）：当作脏值，保持配置里的不变
+    await writeFile(join(napcatDir, 'work', 'config', 'webui.json'), JSON.stringify({ token: 'x' }));
+    const config = {
+      napcat: { directory: napcatDir, webuiPort: 6800, webuiToken: own },
+      selfId: '1000000001', configPath,
+      onebot: { apiUrl: 'http://127.0.0.1:18080', token: 'b'.repeat(48) },
+      events: { port: 5701, secret: 'c'.repeat(48) },
+    };
+    await writeManagedConfig(config);
+    const webui = JSON.parse(await readFile(join(napcatDir, 'work', 'config', 'webui.json'), 'utf8'));
+    assert.equal(webui.token, own, '脏值不能采纳，仍下发配置里的 token');
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
+
+// 回归（掉 token 问题）：面板以前只回传 hasWebuiToken 布尔，三个 48 位串长得一样、
+// 用户只能翻 config.json 猜哪个是 WebUI 密码，拿错就被打回「token is invalid」。
+test('回归：面板要能看到并复制 WebUI 登录 token 和免登录链接', () => {
+  const ui = read('lib/ui.mjs');
+  const cl = read('lib/client.js');
+  assert.match(ui, /webuiToken: String\(raw\?\.napcat\?\.webuiToken/, '状态接口要明文回传 webuiToken');
+  assert.ok(cl.includes('WebUI 登录 token'), '面板要有 token 展示行');
+  assert.ok(cl.includes('navigator.clipboard.writeText'), '要能一键复制');
+  assert.ok(cl.includes('不是 OneBot token'), '要提示别拿错 token');
+  assert.match(cl, /h\("a", \{ href: state\.loginPage/, '免登录链接要是可点击的');
+});
+
+// 配合上一条：用户在 WebUI 改的 token 可能只有 6 位（NapCat 自己的最低要求），
+// 配置校验若还卡 24 位下限，采纳写回后插件自己就起不来了。
+test('回归：webuiToken 校验下限与 NapCat 一致（采纳的短 token 不会把插件卡死）', () => {
+  const cfg = read('lib/config.mjs');
+  assert.match(cfg, /\[a-zA-Z0-9_-\]\{6,128\}\$\/\.test\(napcat\.webuiToken\)/, '下限 6 位，与 NapCat 改密码规则一致');
+});
+
+// 回归：DSH 自带的编程 agent 提示词段要用同名空段遮蔽。
+// 实机事故：宿主 system prompt 里带着 "You are an AI agent powered by …" 与
+// "You are a coding agent powered by the … model." 两层身份声明，和「真实人类
+// 女生」人设三层打架；模型被拉扯后吐过训练默认样板句（"You are a helpful
+// assistant."）并被当聊天内容发了出去。还有三段编程场景的杂音（文件交付指引、
+// 源码 checkout 说明、Web GUI 交互说明）对 QQ 聊天毫无用处。
+test('回归：宿主编程 agent 提示词被同名空段遮蔽（身份声明与人设不再打架）', async () => {
+  const { stripHostPrompt, HOST_PROMPT_SECTIONS } = await import('../lib/util.mjs');
+  const registered = [];
+  let suppressed = false;
+  const agentCtx = { systemPrompt: {
+    section: (s) => registered.push(s),
+    suppressRuntimeContext: () => { suppressed = true; },
+  } };
+  stripHostPrompt(agentCtx);
+  assert.equal(registered.length, HOST_PROMPT_SECTIONS.length, '每段都要注册');
+  for (const s of registered) {
+    assert.equal(s.text, '', '遮蔽段必须是空文本（Empty text contributes nothing）');
+    assert.ok(Number.isFinite(s.order), 'order 要是有限数，否则宿主会抛');
+  }
+  assert.ok(suppressed, '可选运行时上下文也要抑制');
+  for (const want of ['harness:identity', 'deployment:persona-prefix', 'ui:deliverable-file-references', 'harness:source', 'app:web-surface']) {
+    assert.ok(HOST_PROMPT_SECTIONS.some(([n]) => n === want), `遮蔽清单要含 ${want}`);
+  }
+  // 老宿主缺接口时不能炸
+  stripHostPrompt({});
+  stripHostPrompt(undefined);
+});
+
+test('回归：遮蔽清单覆盖宿主五个编程段，且所有建 agent 的 setup 都调用', () => {
+  const rt = read('lib/runtime.mjs');
+  // 行首锚定：注释掉的调用（// stripHostPrompt）不算数
+  assert.ok((rt.match(/^\s*stripHostPrompt\(agentCtx\);/gm) || []).length >= 3, '聊天/情感分析/主动消息三处 setup 都要清');
+  for (const f of ['lib/imagegen.mjs', 'lib/meme-classify.mjs', 'lib/virtual-life-generate.mjs']) {
+    assert.ok((read(f).match(/^\s*stripHostPrompt\(agentCtx\);/m) || []).length > 0, `${f} 的 setup 也要清`);
+  }
+});
+
+// 回归：出站要拦住模型抽风吐的系统样板句。
+// 实机事故：长会话里模型把训练语料经典开头 "You are a helpful assistant."
+// 当正文第一句写了出去，分条发送后对方真收到了这句英文。身份类提示词已清掉
+// （stripHostPrompt），但模型退化是概率事件——出站兜底才保证漏不出去。
+test('回归：系统样板句被剥掉，正常句子（含英文）不受影响', async () => {
+  const { stripModelBoilerplate } = await import('../lib/util.mjs');
+  assert.equal(
+    stripModelBoilerplate('You are a helpful assistant.\n\n……\n\n这话你不准只挂在嘴边'),
+    '……\n\n这话你不准只挂在嘴边',
+    '剥掉样板句行、保留正文');
+  assert.equal(stripModelBoilerplate('I am an AI assistant\n你好呀'), '你好呀');
+  assert.equal(stripModelBoilerplate('As an AI language model, I cannot'), '');
+  assert.equal(stripModelBoilerplate('You are a helpful assistant.'), '', '整条是样板句就返回空，调用方不发');
+  // 正常英文不能误伤
+  assert.equal(stripModelBoilerplate('You are so cute'), 'You are so cute');
+  assert.equal(stripModelBoilerplate('You are a great friend'), 'You are a great friend');
+  assert.equal(stripModelBoilerplate('正常中文回复\nAssistant: 嗨'), '正常中文回复');
+  assert.equal(stripModelBoilerplate(''), '');
+  assert.equal(stripModelBoilerplate(undefined), '');
+});
+
+test('回归：三个出站口都过样板句滤网', () => {
+  const rt = read('lib/runtime.mjs');
+  // 1) 回复流程：settledReply 产出即过滤
+  assert.match(rt, /const output = stripModelBoilerplate\(settledReply\(turnEvents\)\);/, '回复正文要过滤');
+  // 2) 主动消息：composeProactive 的两个返回点都过滤
+  const wrapped = (rt.match(/return \{ text: stripModelBoilerplate\(text\), raw \};/g) || []).length;
+  assert.equal(wrapped, 2, 'composeProactive 两个返回点都要过滤');
+  // 3) 工具路径：sendChat 入口过滤，剥空返回非 sent 状态（模型不能谎称已发）
+  const chat = rt.slice(rt.indexOf('async sendChat('), rt.indexOf('async sendChat(') + 700);
+  assert.match(chat, /^\s*text = stripModelBoilerplate\(text\);/m, 'sendChat 入口要过滤（真调用，不是注释）');
+  assert.match(chat, /status: 'filtered'/, '剥空要返回 filtered 而不是 sent');
 });
