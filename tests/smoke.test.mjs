@@ -3418,3 +3418,77 @@ test('回归：三个出站口都过样板句滤网', () => {
   assert.match(chat, /^\s*text = stripModelBoilerplate\(text\);/m, 'sendChat 入口要过滤（真调用，不是注释）');
   assert.match(chat, /status: 'filtered'/, '剥空要返回 filtered 而不是 sent');
 });
+
+// 回归：人格里要有「句末不加句号」的硬约束。
+// 实机观察：5% 的回复以「。」结尾，还常和口语碎句混在同一段里（风格漂移），
+// 在微信式聊天里很出戏。这是文风问题不是代码 bug（出站不补标点），所以靠提示词收敛。
+test('回归：人格段约束句末不加句号', () => {
+  const rt = read('lib/runtime.mjs');
+  assert.match(rt, /句末不要加句号（。）/, '要有句号的硬约束');
+  // 约束必须落在人格段里（不是能力段），否则会被面板改人格时盖掉
+  const persona = rt.slice(rt.indexOf("name: 'qq-access-persona'"), rt.indexOf("name: 'qq-access-capabilities'"));
+  assert.ok(persona.includes('句末不要加句号'), '约束要在 persona 段内');
+  // 出站不剥离句号：保留她偶尔想认真说话时的自然表达
+  assert.ok(!rt.includes(".replace(/。$/"), '出站不应剥离句号（选项 A 只改提示词）');
+});
+
+// 回归（GitHub issue）：被「拍一拍」时插件完全没反应。
+// OneBot v11 的拍一拍是 post_type:"notice" / notice_type:"poke"，不是 message，
+// normalizeEvent 第一行就把它丢掉且静默无日志 —— 收发不对称（qq_poke 能戳出去，
+// 被戳时收不到），排查时还看不出是「没收到」还是「有意不回」。
+test('回归：拍一拍通知要转成入站消息（接收方向不再静默丢弃）', async () => {
+  const { normalizePoke } = await import('../lib/onebot.mjs');
+  const SELF = '1000000001', A = '2000000002', B = '1111111111';
+  // 私聊被拍
+  const priv = normalizePoke({ post_type: 'notice', notice_type: 'poke', self_id: SELF, user_id: A }, SELF);
+  assert.ok(priv, '私聊被拍要有消息对象');
+  assert.equal(priv.kind, 'private');
+  assert.equal(priv.peerId, A);
+  assert.equal(priv.senderId, A);
+  assert.equal(priv.mentioned, true, '拍一拍等于点名，mention 档也该回');
+  assert.ok(priv.text.trim(), '要有可读占位文本给模型当触发点');
+  assert.match(priv.messageId, /^poke:/, 'messageId 要加 poke: 前缀，避免和真实消息 id 撞');
+  // 群里被拍
+  const grp = normalizePoke({ post_type: 'notice', notice_type: 'poke', self_id: SELF, user_id: A, group_id: '960209480', target_id: SELF }, SELF);
+  assert.equal(grp.kind, 'group');
+  assert.equal(grp.peerId, '960209480', '群聊 peerId 是群号');
+  // 老 NapCat 不带 target_id：按拍我处理
+  assert.ok(normalizePoke({ post_type: 'notice', notice_type: 'poke', self_id: SELF, user_id: A, group_id: '960209480' }, SELF), '缺 target_id 时按拍我处理');
+  // 不该响应的
+  assert.equal(normalizePoke({ post_type: 'notice', notice_type: 'poke', self_id: SELF, user_id: A, group_id: '960209480', target_id: B }, SELF), null, '别人互拍不能当成拍我');
+  assert.equal(normalizePoke({ post_type: 'notice', notice_type: 'poke', self_id: SELF, user_id: SELF }, SELF), null, '自己拍自己不算');
+  assert.equal(normalizePoke({ post_type: 'notice', notice_type: 'group_msg_emo', self_id: SELF, user_id: A }, SELF), null, '其它 notice 类型仍不处理');
+  assert.equal(normalizePoke({ post_type: 'message', message_type: 'private', self_id: SELF, user_id: A }, SELF), null, '普通消息不归它管');
+  assert.equal(normalizePoke(null, SELF), null);
+  // messageId 不能撞
+  const x = normalizePoke({ post_type: 'notice', notice_type: 'poke', self_id: SELF, user_id: A, time: 100 }, SELF);
+  const y = normalizePoke({ post_type: 'notice', notice_type: 'poke', self_id: SELF, user_id: B, time: 100 }, SELF);
+  assert.notEqual(x.messageId, y.messageId, '同秒不同人不能撞 id');
+});
+
+test('回归：accept() 先认 poke 再走 normalizeEvent', () => {
+  const rt = read('lib/runtime.mjs');
+  assert.match(rt, /const message = normalizePoke\(event, this\.config\.selfId\)/, 'accept 要接住 poke');
+  assert.match(rt, /\?\? normalizeEvent\(event, this\.config\.selfId\);/, 'poke 不匹配时照旧走消息归一化');
+});
+
+// 回归：能力指南要讲清「拍一拍」是什么、意味着什么。
+// 接收方向修好后，她被戳时收到一条 text 为「（戳了戳你）」的消息 ——
+// 如果指南不解释，模型会当成怪话或直接无视，等于修了收发却没修理解。
+test('回归：能力指南解释拍一拍的含义与应对（发和收两个方向）', async () => {
+  const { buildCapabilityGuide } = await import('../lib/capabilities.mjs');
+  const g = buildCapabilityGuide({ allowed: null, kind: 'private', photo: false });
+  // 发送方向：告诉模型这是什么动作
+  assert.ok(g.includes('双击') && g.includes('头像'), '要说明拍一拍是双击头像');
+  assert.ok(g.includes('戳一戳'), '要提到 QQ 里的别名叫戳一戳');
+  assert.ok(g.includes('不会产生一条真正的文字消息'), '要说明它不产生文字消息');
+  assert.ok(g.includes('最轻的打招呼方式'), '要说明社交含义');
+  // 接收方向：告诉模型收到时该怎么理解
+  assert.ok(g.includes('（戳了戳你）'), '要点明收到时的占位文本');
+  assert.ok(g.includes('弱提醒') || g.includes('在吗'), '要解释被拍等于「在吗」这类弱提醒');
+  assert.ok(g.includes('别把「（戳了戳你）」当成他说的原话'), '不能把占位文本当对方原话');
+  // 这条属于插件自己的能力段，面板改人格不会覆盖
+  const rt = read('lib/runtime.mjs');
+  const cap = rt.slice(rt.indexOf("name: 'qq-access-capabilities'"));
+  assert.ok(cap.includes('buildCapabilityGuide'), '能力段由 capabilities.mjs 生成（非面板可改）');
+});
