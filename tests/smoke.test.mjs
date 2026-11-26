@@ -3449,13 +3449,13 @@ test('回归：拍一拍通知要转成入站消息（接收方向不再静默�
   assert.ok(priv.text.trim(), '要有可读占位文本给模型当触发点');
   assert.match(priv.messageId, /^poke:/, 'messageId 要加 poke: 前缀，避免和真实消息 id 撞');
   // 群里被拍
-  const grp = normalizePoke({ post_type: 'notice', notice_type: 'poke', self_id: SELF, user_id: A, group_id: '960209480', target_id: SELF }, SELF);
+  const grp = normalizePoke({ post_type: 'notice', notice_type: 'poke', self_id: SELF, user_id: A, group_id: '3000000003', target_id: SELF }, SELF);
   assert.equal(grp.kind, 'group');
-  assert.equal(grp.peerId, '960209480', '群聊 peerId 是群号');
+  assert.equal(grp.peerId, '3000000003', '群聊 peerId 是群号');
   // 老 NapCat 不带 target_id：按拍我处理
-  assert.ok(normalizePoke({ post_type: 'notice', notice_type: 'poke', self_id: SELF, user_id: A, group_id: '960209480' }, SELF), '缺 target_id 时按拍我处理');
+  assert.ok(normalizePoke({ post_type: 'notice', notice_type: 'poke', self_id: SELF, user_id: A, group_id: '3000000003' }, SELF), '缺 target_id 时按拍我处理');
   // 不该响应的
-  assert.equal(normalizePoke({ post_type: 'notice', notice_type: 'poke', self_id: SELF, user_id: A, group_id: '960209480', target_id: B }, SELF), null, '别人互拍不能当成拍我');
+  assert.equal(normalizePoke({ post_type: 'notice', notice_type: 'poke', self_id: SELF, user_id: A, group_id: '3000000003', target_id: B }, SELF), null, '别人互拍不能当成拍我');
   assert.equal(normalizePoke({ post_type: 'notice', notice_type: 'poke', self_id: SELF, user_id: SELF }, SELF), null, '自己拍自己不算');
   assert.equal(normalizePoke({ post_type: 'notice', notice_type: 'group_msg_emo', self_id: SELF, user_id: A }, SELF), null, '其它 notice 类型仍不处理');
   assert.equal(normalizePoke({ post_type: 'message', message_type: 'private', self_id: SELF, user_id: A }, SELF), null, '普通消息不归它管');
